@@ -1,0 +1,10 @@
+{
+  "members": [
+    { "id": 1, "name": "Thomas Shelby", "username": "thomas", "password": "master123", "cls": "Archer", "coins": 1000, "power": 12345, "attendance": 0, "role": "Master" },
+    { "id": 2, "name": "Arthur Shelby", "username": "arthur", "password": "member123", "cls": "Berserker", "coins": 500, "power": 11000, "attendance": 0, "role": "Member" },
+    { "id": 3, "name": "John Shelby", "username": "john", "password": "member123", "cls": "Warlord", "coins": 300, "power": 9000, "attendance": 0, "role": "Member" },
+    { "id": 4, "name": "Finn Shelby", "username": "finn", "password": "member123", "cls": "Skald", "coins": 200, "power": 7000, "attendance": 0, "role": "Member" }
+  ],
+  "auctions": [],
+  "attendanceLogs": []
+}

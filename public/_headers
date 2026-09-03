@@ -1,3 +1,12 @@
+/assets/*.js
+  Content-Type: application/javascript
+
+/assets/*.mjs
+  Content-Type: application/javascript
+
+/assets/*.css
+  Content-Type: text/css
+
 /*.js
   Content-Type: application/javascript
 
@@ -7,11 +16,20 @@
 /*.css
   Content-Type: text/css
 
-/assets/*.js
-  Content-Type: application/javascript
+/*.svg
+  Content-Type: image/svg+xml
 
-/assets/*.mjs
-  Content-Type: application/javascript
+/*.png
+  Content-Type: image/png
 
-/assets/*.css
-  Content-Type: text/css
+/*.jpg
+  Content-Type: image/jpeg
+
+/*.webp
+  Content-Type: image/webp
+
+/*.woff
+  Content-Type: font/woff
+
+/*.woff2
+  Content-Type: font/woff2

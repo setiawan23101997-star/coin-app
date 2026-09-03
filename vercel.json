@@ -1,7 +1,5 @@
 {
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run vercel-build",
   "outputDirectory": "dist",
-  "installCommand": "npm install --legacy-peer-deps",
-  "framework": "vite",
-  "regions": ["iad1"]
+  "installCommand": "npm install --legacy-peer-deps"
 }

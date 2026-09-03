@@ -1,20 +1,17 @@
-# Netlify Headers
-/assets/*
+/assets/*.js
   Content-Type: application/javascript
-  X-Content-Type-Options: nosniff
+
+/assets/*.mjs
+  Content-Type: application/javascript
+
+/assets/*.css
+  Content-Type: text/css
 
 /*.js
   Content-Type: application/javascript
-  X-Content-Type-Options: nosniff
 
 /*.mjs
   Content-Type: application/javascript
-  X-Content-Type-Options: nosniff
 
 /*.css
   Content-Type: text/css
-  X-Content-Type-Options: nosniff
-
-/*.html
-  Content-Type: text/html
-  X-Content-Type-Options: nosniff

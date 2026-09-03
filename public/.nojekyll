@@ -1,0 +1,3 @@
+D:
+cd peaky\public
+echo. > .nojekyll

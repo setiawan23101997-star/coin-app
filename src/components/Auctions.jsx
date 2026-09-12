@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 
 export default function Auctions({ ctx }) {
-  const { members, setMembers, auctions, setAuctions, currentUser, addToast } = ctx
+  const { members, setMembers, auctions, setAuctions, currentUser, addToast, supabase } = ctx
   const [showCreate, setShowCreate] = useState(false)
   const [newItem, setNewItem] = useState({ name: '', rarity: 'epic', startBid: 100, duration: 60 })
   const [bidAmounts, setBidAmounts] = useState({})
@@ -9,14 +9,17 @@ export default function Auctions({ ctx }) {
   const isElder = currentUser?.role === 'Elder' || currentUser?.role === 'Master'
   const isMaster = currentUser?.role === 'Master'
 
-  const createAuction = () => {
+  // ═══════════════════════════════════════════════════════════════
+  // CREATE AUCTION — saves to Supabase
+  // ═══════════════════════════════════════════════════════════════
+  const createAuction = async () => {
     if (!newItem.name.trim()) {
       addToast('Enter an item name.', 'red', 'Error')
       return
     }
     const endsAt = Date.now() + (parseInt(newItem.duration) || 60) * 60 * 1000
     const auction = {
-      id: Date.now(),
+      id: String(Date.now()),
       name: newItem.name.trim(),
       rarity: newItem.rarity,
       startBid: parseInt(newItem.startBid) || 100,
@@ -26,13 +29,37 @@ export default function Auctions({ ctx }) {
       endsAt,
       bids: [],
     }
+
+    const { error } = await supabase.from('auctions').insert([{
+      id: auction.id,
+      name: auction.name,
+      description: '',
+      rarity: auction.rarity,
+      status: 'active',
+      started_at: Date.now(),
+      ends_at: endsAt,
+      current_bid: auction.currentBid,
+      min_bid: auction.startBid,
+      top_bidder: null,
+      bids: [],
+    }])
+
+    if (error) {
+      console.error('Create auction failed:', error)
+      addToast(`Couldn't create auction: ${error.message}`, 'red', 'Save Failed')
+      return
+    }
+
     setAuctions([auction, ...auctions])
     setNewItem({ name: '', rarity: 'epic', startBid: 100, duration: 60 })
     setShowCreate(false)
     addToast(`"${auction.name}" is now up for auction!`, 'gold', 'Auction Live')
   }
 
-  const placeBid = (auctionId) => {
+  // ═══════════════════════════════════════════════════════════════
+  // PLACE BID — updates auction + members in Supabase
+  // ═══════════════════════════════════════════════════════════════
+  const placeBid = async (auctionId) => {
     const amount = parseInt(bidAmounts[auctionId])
     if (!amount || amount <= 0) {
       addToast('Enter a valid bid amount.', 'red', 'Invalid Bid')
@@ -44,7 +71,6 @@ export default function Auctions({ ctx }) {
       addToast('This auction has ended.', 'red', 'Auction Ended')
       return
     }
-
     if (amount <= auction.currentBid) {
       addToast(`Bid must be higher than ${auction.currentBid}.`, 'red', 'Invalid Bid')
       return
@@ -56,43 +82,88 @@ export default function Auctions({ ctx }) {
       return
     }
 
-    // Refund previous top bidder
+    const newBids = [...(auction.bids || []), { bidder: currentUser.name, amount, time: Date.now() }]
+
+    // 1. Update auction in DB
+    const { error: auctionErr } = await supabase
+      .from('auctions')
+      .update({
+        current_bid: amount,
+        top_bidder: currentUser.name,
+        bids: newBids,
+      })
+      .eq('id', auctionId)
+
+    if (auctionErr) {
+      console.error('Bid update failed:', auctionErr)
+      addToast(`Couldn't place bid: ${auctionErr.message}`, 'red', 'Save Failed')
+      return
+    }
+
+    // 2. Deduct coins from bidder in DB
+    const { error: bidderErr } = await supabase
+      .from('members')
+      .update({ coins: bidder.coins - amount })
+      .eq('id', bidder.id)
+
+    if (bidderErr) console.error('Bidder coin deduction failed:', bidderErr)
+
+    // 3. Refund previous top bidder in DB
     if (auction.topBidder) {
       const prev = members.find(m => m.name === auction.topBidder)
       if (prev) {
-        setMembers(members.map(m => m.id === prev.id ? { ...m, coins: m.coins + auction.currentBid } : m))
+        const { error: refundErr } = await supabase
+          .from('members')
+          .update({ coins: prev.coins + auction.currentBid })
+          .eq('id', prev.id)
+        if (refundErr) console.error('Refund failed:', refundErr)
       }
     }
 
-    // Deduct from bidder
-    setMembers(members.map(m => m.id === bidder.id ? { ...m, coins: m.coins - amount } : m))
+    // 4. Update local state so UI feels instant
+    setMembers(members.map(m => {
+      if (m.id === bidder.id) return { ...m, coins: m.coins - amount }
+      if (auction.topBidder && m.name === auction.topBidder) return { ...m, coins: m.coins + auction.currentBid }
+      return m
+    }))
 
-    // Update auction
-    const updated = {
+    let updatedAuction = {
       ...auction,
       currentBid: amount,
       topBidder: currentUser.name,
-      bids: [...(auction.bids || []), { bidder: currentUser.name, amount, time: Date.now() }],
+      bids: newBids,
     }
-    setAuctions(auctions.map(a => a.id === auctionId ? updated : a))
 
-    setBidAmounts({ ...bidAmounts, [auctionId]: '' })
-    addToast(`Bid of ${amount} coins placed on ${auction.name}.`, 'gold', 'Bid Placed')
-
-    // Check if auction should auto-end (snipe protection)
+    // Snipe protection
     const timeLeft = auction.endsAt - Date.now()
     if (timeLeft < 60000 && timeLeft > 0) {
       const newEnd = Date.now() + 120000
-      setAuctions(auctions.map(a => a.id === auctionId ? { ...a, endsAt: newEnd } : a))
+      updatedAuction.endsAt = newEnd
+      await supabase.from('auctions').update({ ends_at: newEnd }).eq('id', auctionId)
       addToast('⏱️ Timer extended 2 mins (snipe protection)', 'blue', 'Extension')
     }
+
+    setAuctions(auctions.map(a => a.id === auctionId ? updatedAuction : a))
+    setBidAmounts({ ...bidAmounts, [auctionId]: '' })
+    addToast(`Bid of ${amount} coins placed on ${auction.name}.`, 'gold', 'Bid Placed')
   }
 
-  const endAuction = (auctionId) => {
+  // ═══════════════════════════════════════════════════════════════
+  // END AUCTION — updates DB
+  // ═══════════════════════════════════════════════════════════════
+  const endAuction = async (auctionId) => {
     if (!isMaster) return
     const auction = auctions.find(a => a.id === auctionId)
     if (!auction) return
     if (window.confirm(`End "${auction.name}" early?`)) {
+      const { error } = await supabase
+        .from('auctions')
+        .update({ status: 'ended' })
+        .eq('id', auctionId)
+      if (error) {
+        addToast(`Couldn't end auction: ${error.message}`, 'red', 'Save Failed')
+        return
+      }
       setAuctions(auctions.map(a => a.id === auctionId ? { ...a, status: 'ended' } : a))
       addToast(`"${auction.name}" ended early.`, 'red', 'Auction Ended')
     }
@@ -124,49 +195,30 @@ export default function Auctions({ ctx }) {
         )}
       </div>
 
-      {/* Create Auction Form */}
       {showCreate && (
         <div className="card mb-6 border-gold/40">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input
-              className="input"
-              placeholder="Item name"
-              value={newItem.name}
-              onChange={e => setNewItem({ ...newItem, name: e.target.value })}
-            />
-            <select
-              className="input"
-              value={newItem.rarity}
-              onChange={e => setNewItem({ ...newItem, rarity: e.target.value })}
-            >
+            <input className="input" placeholder="Item name" value={newItem.name}
+              onChange={e => setNewItem({ ...newItem, name: e.target.value })} />
+            <select className="input" value={newItem.rarity}
+              onChange={e => setNewItem({ ...newItem, rarity: e.target.value })}>
               <option value="material">Material</option>
               <option value="uncommon">Uncommon</option>
               <option value="rare">Rare</option>
               <option value="epic">Epic</option>
               <option value="legendary">Legendary</option>
             </select>
-            <input
-              className="input"
-              type="number"
-              placeholder="Start bid"
-              value={newItem.startBid}
-              onChange={e => setNewItem({ ...newItem, startBid: parseInt(e.target.value) || 0 })}
-            />
+            <input className="input" type="number" placeholder="Start bid" value={newItem.startBid}
+              onChange={e => setNewItem({ ...newItem, startBid: parseInt(e.target.value) || 0 })} />
             <div className="flex gap-2">
-              <input
-                className="input"
-                type="number"
-                placeholder="Duration (min)"
-                value={newItem.duration}
-                onChange={e => setNewItem({ ...newItem, duration: parseInt(e.target.value) || 60 })}
-              />
+              <input className="input" type="number" placeholder="Duration (min)" value={newItem.duration}
+                onChange={e => setNewItem({ ...newItem, duration: parseInt(e.target.value) || 60 })} />
               <button onClick={createAuction} className="btn-gold whitespace-nowrap">Start Auction</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Active Auctions */}
       {activeAuctions.length === 0 ? (
         <div className="card text-center py-12 text-text-dim">No active auctions.</div>
       ) : (
@@ -201,16 +253,11 @@ export default function Auctions({ ctx }) {
 
                 {currentUser && auction.status === 'active' && (
                   <div className="flex gap-2 mt-3">
-                    <input
-                      className="input text-sm flex-1"
-                      type="number"
+                    <input className="input text-sm flex-1" type="number"
                       placeholder={`Min ${auction.currentBid + 1}`}
                       value={bidAmounts[auction.id] || ''}
-                      onChange={e => setBidAmounts({ ...bidAmounts, [auction.id]: e.target.value })}
-                    />
-                    <button onClick={() => placeBid(auction.id)} className="btn-gold text-sm px-3">
-                      Bid
-                    </button>
+                      onChange={e => setBidAmounts({ ...bidAmounts, [auction.id]: e.target.value })} />
+                    <button onClick={() => placeBid(auction.id)} className="btn-gold text-sm px-3">Bid</button>
                   </div>
                 )}
 
@@ -225,7 +272,6 @@ export default function Auctions({ ctx }) {
         </div>
       )}
 
-      {/* Ended Auctions */}
       {endedAuctions.length > 0 && (
         <div className="card">
           <div className="text-sm font-bold text-text-dim uppercase tracking-wider mb-3">Ended Auctions</div>

@@ -153,6 +153,27 @@ function App() {
 
   useEffect(() => {
     loadAllData()
+useEffect(() => {
+  const interval = setInterval(async () => {
+    const { data: membersData } = await supabase.from('members').select('*').order('id')
+    const { data: auctionsData } = await supabase.from('auctions').select('*')
+    if (membersData) setMembers(membersData)
+    if (auctionsData) setAuctions(auctionsData.map(a => ({
+      id: String(a.id),
+      name: a.name,
+      rarity: a.rarity,
+      status: a.status,
+      currentBid: Number(a.current_bid) || 0,
+      topBidder: a.top_bidder,
+      endsAt: Number(a.ends_at) || 0,
+      startedAt: Number(a.started_at) || 0,
+      startBid: Number(a.min_bid) || 0,
+      bids: typeof a.bids === 'string' ? JSON.parse(a.bids) : (a.bids || []),
+    })))
+  }, 5000) // every 5 seconds
+
+  return () => clearInterval(interval)
+}, [])
   }, [])
 
   const addToast = (msg, type = 'gold', title = '') => {

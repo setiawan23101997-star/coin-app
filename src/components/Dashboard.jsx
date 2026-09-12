@@ -586,6 +586,16 @@ function RecentWinsStrip({ wins, now, onOpenAll, currentUser }) {
   )
 }
 
+/**
+ * "Coming up next" card.
+ *
+ * Desktop (≥ md): two-column layout — icon + name on the left, big countdown
+ *   on the right. Full name is always visible.
+ *
+ * Mobile (< md): stacked layout — icon + "Coming up next" label + full name
+ *   + day/time at the top, then a full-width countdown block below. Nothing
+ *   truncates; the name wraps naturally to 2 lines if needed.
+ */
 function NextEventCard({ event, now }) {
   const t = TYPE[event.type]
   const remaining = event.nextTs - now
@@ -599,32 +609,86 @@ function NextEventCard({ event, now }) {
         style={{ background: `radial-gradient(circle at 0% 0%, ${t.color}, transparent 60%)` }}
         aria-hidden="true"
       />
-      <div className="relative p-4 sm:p-6 flex items-center gap-4 sm:gap-6 flex-wrap">
-        <div
-          className="flex-shrink-0 w-14 h-14 sm:w-16 sm:h-16 rounded-xl flex items-center justify-center text-2xl sm:text-3xl"
-          style={{ background: `${t.color}15`, border: `1px solid ${t.color}40` }}
-          aria-hidden="true"
-        >
-          {t.icon}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-xs font-semibold mb-1" style={{ color: t.color }}>Coming up next</div>
-          <div className="font-spectral text-xl sm:text-2xl font-bold text-text-bright leading-tight truncate">{event.name}</div>
-          <div className="flex items-center gap-3 sm:gap-4 mt-2 text-sm text-text-dim flex-wrap">
-            {event.boss && <span className="truncate">👾 {event.boss}</span>}
-            <span className="font-mono tabular-nums whitespace-nowrap">{DAY_NAMES[event.dow]} · {to12h(event.time)}</span>
+
+      {/* ── Mobile / narrow layout (< md) ── */}
+      <div className="md:hidden relative p-4">
+        {/* Header: icon + label */}
+        <div className="flex items-center gap-3 mb-3">
+          <div
+            className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+            style={{ background: `${t.color}15`, border: `1px solid ${t.color}40` }}
+            aria-hidden="true"
+          >
+            {t.icon}
+          </div>
+          <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: t.color }}>
+            Coming up next
           </div>
         </div>
-        <div className="text-right flex-shrink-0">
-          <div className="text-[11px] text-text-dim font-semibold mb-1">Starts in</div>
+
+        {/* Name — full width, wraps naturally */}
+        <div className="font-spectral text-xl font-bold text-text-bright leading-tight mb-2">
+          {event.name}
+        </div>
+
+        {/* Boss + day/time */}
+        <div className="flex flex-col gap-1 text-sm text-text-dim">
+          {event.boss && (
+            <div className="truncate">👾 {event.boss}</div>
+          )}
+          <div className="font-mono tabular-nums whitespace-nowrap">
+            {DAY_NAMES[event.dow]} · {to12h(event.time)}
+          </div>
+        </div>
+
+        {/* Countdown block — full width, right aligned */}
+        <div className="mt-3 pt-3 border-t border-gold/10 flex items-center justify-between gap-3">
+          <div className="text-[11px] text-text-dim font-semibold uppercase tracking-wider">
+            Starts in
+          </div>
           <div
-            className={`font-mono text-3xl sm:text-4xl font-bold tabular-nums leading-none whitespace-nowrap ${urgent ? 'motion-safe:animate-pulse' : ''}`}
+            className={`font-mono text-3xl font-bold tabular-nums leading-none whitespace-nowrap ${urgent ? 'motion-safe:animate-pulse' : ''}`}
             style={{ color: t.color }}
           >
             {formatCountdown(remaining)}
           </div>
         </div>
       </div>
+
+      {/* ── Desktop layout (≥ md) ── */}
+      <div className="hidden md:flex relative p-6 items-center gap-6">
+        <div
+          className="flex-shrink-0 w-16 h-16 rounded-xl flex items-center justify-center text-3xl"
+          style={{ background: `${t.color}15`, border: `1px solid ${t.color}40` }}
+          aria-hidden="true"
+        >
+          {t.icon}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-semibold mb-1" style={{ color: t.color }}>Coming up next</div>
+          <div className="font-spectral text-2xl font-bold text-text-bright leading-tight truncate">
+            {event.name}
+          </div>
+          <div className="flex items-center gap-4 mt-2 text-sm text-text-dim flex-wrap">
+            {event.boss && <span className="truncate">👾 {event.boss}</span>}
+            <span className="font-mono tabular-nums whitespace-nowrap">
+              {DAY_NAMES[event.dow]} · {to12h(event.time)}
+            </span>
+          </div>
+        </div>
+
+        <div className="text-right flex-shrink-0">
+          <div className="text-[11px] text-text-dim font-semibold mb-1 whitespace-nowrap">Starts in</div>
+          <div
+            className={`font-mono text-4xl font-bold tabular-nums leading-none whitespace-nowrap ${urgent ? 'motion-safe:animate-pulse' : ''}`}
+            style={{ color: t.color }}
+          >
+            {formatCountdown(remaining)}
+          </div>
+        </div>
+      </div>
+
       <div className="h-1 bg-void/60" role="presentation">
         <div
           className="h-full transition-[width] duration-1000 ease-linear"
@@ -728,21 +792,6 @@ function WeeklyEventTabs({ scheduleByDay, todayDow, activeDay, onSelect, now, id
 
 /**
  * Responsive event row.
- *
- * Mobile layout (< sm):
- *   ┌─────────────────────────────────────┐
- *   │ [icon]  Event Name                  │
- *   │         👾 Boss                     │
- *   │ ───                                 │
- *   │ 22:00   10:00 PM        Starts in   │
- *   │                        14h 17m      │
- *   └─────────────────────────────────────┘
- *
- * Desktop layout (≥ sm):
- *   ┌────────────────────────────────────────────────────┐
- *   │ 22:00   [icon]  Event Name          Starts in      │
- *   │ 10:00 PM        👾 Boss             14h 17m        │
- *   └────────────────────────────────────────────────────┘
  */
 function EventRow({ ev, dow, now }) {
   const t = TYPE[ev.type]
@@ -753,7 +802,6 @@ function EventRow({ ev, dow, now }) {
     <div className="rounded-lg bg-void/50 border border-gold/10 p-3 sm:p-0 sm:px-4 sm:py-3 hover:border-gold/25 transition-colors">
       {/* ── Mobile layout ── */}
       <div className="sm:hidden">
-        {/* Top: icon + name + subtitle */}
         <div className="flex items-start gap-3">
           <div
             className="flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-lg"
@@ -774,7 +822,6 @@ function EventRow({ ev, dow, now }) {
           </div>
         </div>
 
-        {/* Bottom: time block + countdown block */}
         <div className="mt-2.5 pt-2.5 border-t border-gold/10 flex items-center justify-between gap-3">
           <div className="flex items-baseline gap-2 min-w-0">
             <span

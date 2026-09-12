@@ -45,8 +45,8 @@ const DEBUG_WINS = false // flip to true to log why auctions are filtered out of
 
 const TYPE = {
   boss:     { color: '#ef4444', icon: '👾', label: 'World Boss' },
-  battle:   { color: '#3b82f6', icon: '⚔️', label: 'Battle' },
-  treasure: { color: '#eab308', icon: '🏝️', label: 'Treasure' },
+  battle:   { color: '#3b82f6', icon: '⚔️', label: 'Server Battle' },
+  treasure: { color: '#eab308', icon: '🏝️', label: 'Sindri Island' },
   arena:    { color: '#a855f7', icon: '🏟️', label: 'Arena' },
 }
 

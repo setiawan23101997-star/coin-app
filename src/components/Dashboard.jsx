@@ -60,11 +60,14 @@ const RARITY_COLORS = {
 
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
+// Non-breaking space (U+00A0) so "10:00 PM" never wraps between the time and the period.
+const NBSP = '\u00A0'
+
 function to12h(hhmm) {
   const [h, m] = hhmm.split(':').map(Number)
   const period = h >= 12 ? 'PM' : 'AM'
   const h12 = h % 12 === 0 ? 12 : h % 12
-  return `${h12}:${String(m).padStart(2, '0')} ${period}`
+  return `${h12}:${String(m).padStart(2, '0')}${NBSP}${period}`
 }
 
 function toGMT8(ts) {
@@ -129,10 +132,6 @@ function getGreeting(hour) {
 
 /**
  * Normalize a finished auction into a "winner" record.
- *
- * Name priority:   winner → winnerName → topBidder → soldTo
- * Price priority:  finalBid → currentBid → winningBid
- * End-ts priority: endedAt → closedAt → endsAt (only if in the past) → last bid time
  */
 function readWinner(a, now = Date.now()) {
   const name = a.winner || a.winnerName || a.topBidder || a.soldTo || null
@@ -171,8 +170,6 @@ export default function Dashboard({ ctx, setPage }) {
   const clock = useMemo(() => toGMT8(now), [now])
   const todayDow = clock.getUTCDay()
 
-  // Default the tab bar to today, exactly once, without overriding a
-  // day the person has since clicked over to.
   useEffect(() => {
     setSelectedDay(prev => prev ?? todayDow)
   }, [todayDow])
@@ -187,7 +184,6 @@ export default function Dashboard({ ctx, setPage }) {
     return { visibleMembers: visible, totalCoins: coins, totalPower: power }
   }, [members, isAdmin])
 
-  // Active auctions sorted by soonest ending, capped at 3 for the strip
   const activeAuctions = useMemo(() => {
     return auctions
       .filter(a => a.status === 'active')
@@ -200,7 +196,6 @@ export default function Dashboard({ ctx, setPage }) {
     [auctions]
   )
 
-  // Recently finished auctions with a winner — shown for RECENT_WIN_MS after close.
   const recentWins = useMemo(() => {
     const cutoff = now - RECENT_WIN_MS
     const allEnded = auctions.filter(a => a.status !== 'active')
@@ -276,7 +271,7 @@ export default function Dashboard({ ctx, setPage }) {
             <p className="text-text-dim text-base mt-4 max-w-lg">
               {todayEvents.length > 0
                 ? <>{todayEvents.length} {todayEvents.length === 1 ? 'event' : 'events'} on today's schedule — first one at{' '}
-                    <span className="text-gold-light font-semibold font-mono">{to12h(todayEvents[0].time)}</span>.</>
+                    <span className="text-gold-light font-semibold font-mono whitespace-nowrap">{to12h(todayEvents[0].time)}</span>.</>
                 : <>Nothing scheduled today. Good day to rest up.</>}
             </p>
           </div>
@@ -418,7 +413,7 @@ function LiveAuctionsStrip({ auctions, totalCount, now, onOpenAll, currentUser }
                   {a.rarity}
                 </span>
                 <span
-                  className={`text-[11px] font-mono tabular-nums font-semibold ${
+                  className={`text-[11px] font-mono tabular-nums font-semibold whitespace-nowrap ${
                     isEnding ? 'text-red-400 motion-safe:animate-pulse' : 'text-text-dim'
                   }`}
                 >
@@ -541,7 +536,7 @@ function RecentWinsStrip({ wins, now, onOpenAll, currentUser }) {
                 >
                   {a.rarity}
                 </span>
-                <span className="text-[11px] font-mono tabular-nums font-semibold text-text-dim">
+                <span className="text-[11px] font-mono tabular-nums font-semibold text-text-dim whitespace-nowrap">
                   {justEnded ? 'Just ended' : agoLabel}
                 </span>
               </div>
@@ -604,9 +599,9 @@ function NextEventCard({ event, now }) {
         style={{ background: `radial-gradient(circle at 0% 0%, ${t.color}, transparent 60%)` }}
         aria-hidden="true"
       />
-      <div className="relative p-6 flex items-center gap-6 flex-wrap">
+      <div className="relative p-4 sm:p-6 flex items-center gap-4 sm:gap-6 flex-wrap">
         <div
-          className="flex-shrink-0 w-16 h-16 rounded-xl flex items-center justify-center text-3xl"
+          className="flex-shrink-0 w-14 h-14 sm:w-16 sm:h-16 rounded-xl flex items-center justify-center text-2xl sm:text-3xl"
           style={{ background: `${t.color}15`, border: `1px solid ${t.color}40` }}
           aria-hidden="true"
         >
@@ -614,16 +609,16 @@ function NextEventCard({ event, now }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-xs font-semibold mb-1" style={{ color: t.color }}>Coming up next</div>
-          <div className="font-spectral text-2xl font-bold text-text-bright leading-tight truncate">{event.name}</div>
-          <div className="flex items-center gap-4 mt-2 text-sm text-text-dim flex-wrap">
-            {event.boss && <span>👾 {event.boss}</span>}
-            <span className="font-mono tabular-nums">{DAY_NAMES[event.dow]} · {to12h(event.time)}</span>
+          <div className="font-spectral text-xl sm:text-2xl font-bold text-text-bright leading-tight truncate">{event.name}</div>
+          <div className="flex items-center gap-3 sm:gap-4 mt-2 text-sm text-text-dim flex-wrap">
+            {event.boss && <span className="truncate">👾 {event.boss}</span>}
+            <span className="font-mono tabular-nums whitespace-nowrap">{DAY_NAMES[event.dow]} · {to12h(event.time)}</span>
           </div>
         </div>
-        <div className="text-right">
+        <div className="text-right flex-shrink-0">
           <div className="text-[11px] text-text-dim font-semibold mb-1">Starts in</div>
           <div
-            className={`font-mono text-4xl font-bold tabular-nums leading-none ${urgent ? 'motion-safe:animate-pulse' : ''}`}
+            className={`font-mono text-3xl sm:text-4xl font-bold tabular-nums leading-none whitespace-nowrap ${urgent ? 'motion-safe:animate-pulse' : ''}`}
             style={{ color: t.color }}
           >
             {formatCountdown(remaining)}
@@ -693,15 +688,15 @@ function WeeklyEventTabs({ scheduleByDay, todayDow, activeDay, onSelect, now, id
               tabIndex={isActive ? 0 : -1}
               onClick={() => onSelect(dow)}
               onKeyDown={e => handleKeyDown(e, dow)}
-              className={`relative flex-1 min-w-[76px] flex flex-col items-center gap-1 px-3 py-3 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold/60 focus-visible:-outline-offset-2 ${
+              className={`relative flex-1 min-w-[64px] sm:min-w-[76px] flex flex-col items-center gap-1 px-2 sm:px-3 py-3 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold/60 focus-visible:-outline-offset-2 ${
                 isActive ? 'text-gold-bright' : 'text-text-dim hover:text-text-bright'
               }`}
             >
-              <span className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1.5 whitespace-nowrap">
                 {DAY_SHORT[dow]}
                 {isToday && <span className="w-1.5 h-1.5 rounded-full bg-gold-bright" aria-label="Today" />}
               </span>
-              <span className="text-[11px] font-mono tabular-nums text-text-dim">
+              <span className="text-[11px] font-mono tabular-nums text-text-dim whitespace-nowrap">
                 {count} {count === 1 ? 'evt' : 'evts'}
               </span>
               {isActive && (
@@ -731,35 +726,110 @@ function WeeklyEventTabs({ scheduleByDay, todayDow, activeDay, onSelect, now, id
   )
 }
 
+/**
+ * Responsive event row.
+ *
+ * Mobile layout (< sm):
+ *   ┌─────────────────────────────────────┐
+ *   │ [icon]  Event Name                  │
+ *   │         👾 Boss                     │
+ *   │ ───                                 │
+ *   │ 22:00   10:00 PM        Starts in   │
+ *   │                        14h 17m      │
+ *   └─────────────────────────────────────┘
+ *
+ * Desktop layout (≥ sm):
+ *   ┌────────────────────────────────────────────────────┐
+ *   │ 22:00   [icon]  Event Name          Starts in      │
+ *   │ 10:00 PM        👾 Boss             14h 17m        │
+ *   └────────────────────────────────────────────────────┘
+ */
 function EventRow({ ev, dow, now }) {
   const t = TYPE[ev.type]
   const startTs = useMemo(() => nextOccurrence(dow, ev.time, now), [dow, ev.time, now])
+  const countdown = formatCountdown(startTs - now)
 
   return (
-    <div className="rounded-lg bg-void/50 border border-gold/10 px-4 py-3 flex items-center gap-4 hover:border-gold/25 transition-colors">
-      <div className="flex-shrink-0 w-16 text-center border-r border-gold/15 pr-4">
-        <div className="font-mono font-bold text-base tabular-nums leading-tight" style={{ color: t.color }}>{ev.time}</div>
-        <div className="text-[11px] text-text-dim font-mono tabular-nums mt-0.5">{to12h(ev.time)}</div>
+    <div className="rounded-lg bg-void/50 border border-gold/10 p-3 sm:p-0 sm:px-4 sm:py-3 hover:border-gold/25 transition-colors">
+      {/* ── Mobile layout ── */}
+      <div className="sm:hidden">
+        {/* Top: icon + name + subtitle */}
+        <div className="flex items-start gap-3">
+          <div
+            className="flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-lg"
+            style={{ background: `${t.color}10`, border: `1px solid ${t.color}25` }}
+            aria-hidden="true"
+          >
+            {t.icon}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-text-bright leading-snug">
+              {ev.name}
+            </div>
+            {(ev.boss || ev.subtitle) && (
+              <div className="text-xs text-text-dim mt-0.5 leading-snug">
+                {ev.boss ? `👾 ${ev.boss}` : ev.subtitle}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Bottom: time block + countdown block */}
+        <div className="mt-2.5 pt-2.5 border-t border-gold/10 flex items-center justify-between gap-3">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span
+              className="font-mono font-bold text-sm tabular-nums leading-none whitespace-nowrap"
+              style={{ color: t.color }}
+            >
+              {ev.time}
+            </span>
+            <span className="text-[11px] text-text-dim font-mono tabular-nums whitespace-nowrap">
+              {to12h(ev.time)}
+            </span>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <div className="text-[10px] text-text-dim leading-none">Starts in</div>
+            <div className="font-mono text-xs text-gold-light tabular-nums mt-1 leading-none whitespace-nowrap">
+              {countdown}
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div
-        className="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center text-xl"
-        style={{ background: `${t.color}10`, border: `1px solid ${t.color}25` }}
-        aria-hidden="true"
-      >
-        {t.icon}
-      </div>
+      {/* ── Desktop layout ── */}
+      <div className="hidden sm:flex items-center gap-4">
+        <div className="flex-shrink-0 w-16 text-center border-r border-gold/15 pr-4">
+          <div className="font-mono font-bold text-base tabular-nums leading-tight whitespace-nowrap" style={{ color: t.color }}>
+            {ev.time}
+          </div>
+          <div className="text-[11px] text-text-dim font-mono tabular-nums mt-0.5 whitespace-nowrap">
+            {to12h(ev.time)}
+          </div>
+        </div>
 
-      <div className="flex-1 min-w-0">
-        <div className="text-base font-semibold text-text-bright truncate">{ev.name}</div>
-        {(ev.boss || ev.subtitle) && (
-          <div className="text-sm text-text-dim truncate mt-0.5">{ev.boss ? `👾 ${ev.boss}` : ev.subtitle}</div>
-        )}
-      </div>
+        <div
+          className="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center text-xl"
+          style={{ background: `${t.color}10`, border: `1px solid ${t.color}25` }}
+          aria-hidden="true"
+        >
+          {t.icon}
+        </div>
 
-      <div className="text-right flex-shrink-0">
-        <div className="text-[11px] text-text-dim">Starts in</div>
-        <div className="font-mono text-sm text-gold-light tabular-nums mt-0.5">{formatCountdown(startTs - now)}</div>
+        <div className="flex-1 min-w-0">
+          <div className="text-base font-semibold text-text-bright truncate">{ev.name}</div>
+          {(ev.boss || ev.subtitle) && (
+            <div className="text-sm text-text-dim truncate mt-0.5">
+              {ev.boss ? `👾 ${ev.boss}` : ev.subtitle}
+            </div>
+          )}
+        </div>
+
+        <div className="text-right flex-shrink-0">
+          <div className="text-[11px] text-text-dim">Starts in</div>
+          <div className="font-mono text-sm text-gold-light tabular-nums mt-0.5 whitespace-nowrap">
+            {countdown}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -772,7 +842,7 @@ function StatTile({ icon, label, value, onClick }) {
     <Tag
       type={clickable ? 'button' : undefined}
       onClick={onClick}
-      className={`text-left rounded-xl border border-gold/15 bg-void/40 px-5 py-4 transition-colors ${
+      className={`text-left rounded-xl border border-gold/15 bg-void/40 px-4 sm:px-5 py-4 transition-colors ${
         clickable ? 'hover:border-gold/40 hover:bg-gold/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold/60 cursor-pointer' : ''
       }`}
     >
@@ -780,7 +850,7 @@ function StatTile({ icon, label, value, onClick }) {
         <span className="text-xl" aria-hidden="true">{icon}</span>
         <span className="text-[11px] text-text-dim font-semibold">{label}</span>
       </div>
-      <div className="font-mono text-3xl font-bold text-text-bright tabular-nums leading-none">{value}</div>
+      <div className="font-mono text-2xl sm:text-3xl font-bold text-text-bright tabular-nums leading-none">{value}</div>
     </Tag>
   )
 }

@@ -3,43 +3,39 @@ import React, { useState } from 'react'
 export default function Auctions({ ctx }) {
   const { members, setMembers, auctions, setAuctions, currentUser, addToast, supabase } = ctx
   const [showCreate, setShowCreate] = useState(false)
-  const [newItem, setNewItem] = useState({ name: '', rarity: 'epic', startBid: 100, duration: 60 })
+  const [newItem, setNewItem] = useState({
+    name: '',
+    description: '',
+    rarity: 'epic',
+    startBid: 100,
+    duration: 60,
+  })
   const [bidAmounts, setBidAmounts] = useState({})
 
   const isElder = currentUser?.role === 'Elder' || currentUser?.role === 'Master'
   const isMaster = currentUser?.role === 'Master'
 
-  // ═══════════════════════════════════════════════════════════════
-  // CREATE AUCTION — saves to Supabase
-  // ═══════════════════════════════════════════════════════════════
   const createAuction = async () => {
     if (!newItem.name.trim()) {
       addToast('Enter an item name.', 'red', 'Error')
       return
     }
-    const endsAt = Date.now() + (parseInt(newItem.duration) || 60) * 60 * 1000
-    const auction = {
-      id: String(Date.now()),
-      name: newItem.name.trim(),
-      rarity: newItem.rarity,
-      startBid: parseInt(newItem.startBid) || 100,
-      currentBid: parseInt(newItem.startBid) || 100,
-      topBidder: null,
-      status: 'active',
-      endsAt,
-      bids: [],
-    }
+
+    const startBid = parseInt(newItem.startBid) || 100
+    const durationMin = parseInt(newItem.duration) || 60
+    const endsAt = Date.now() + durationMin * 60 * 1000
+    const id = String(Date.now())
 
     const { error } = await supabase.from('auctions').insert([{
-      id: auction.id,
-      name: auction.name,
-      description: '',
-      rarity: auction.rarity,
+      id,
+      name: newItem.name.trim(),
+      description: newItem.description.trim(),
+      rarity: newItem.rarity,
       status: 'active',
       started_at: Date.now(),
       ends_at: endsAt,
-      current_bid: auction.currentBid,
-      min_bid: auction.startBid,
+      current_bid: startBid,
+      min_bid: startBid,
       top_bidder: null,
       bids: [],
     }])
@@ -50,15 +46,25 @@ export default function Auctions({ ctx }) {
       return
     }
 
-    setAuctions([auction, ...auctions])
-    setNewItem({ name: '', rarity: 'epic', startBid: 100, duration: 60 })
+    setAuctions(prev => [{
+      id,
+      name: newItem.name.trim(),
+      description: newItem.description.trim(),
+      rarity: newItem.rarity,
+      status: 'active',
+      currentBid: startBid,
+      startBid,
+      topBidder: null,
+      endsAt,
+      startedAt: Date.now(),
+      bids: [],
+    }, ...prev])
+
+    setNewItem({ name: '', description: '', rarity: 'epic', startBid: 100, duration: 60 })
     setShowCreate(false)
-    addToast(`"${auction.name}" is now up for auction!`, 'gold', 'Auction Live')
+    addToast(`"${newItem.name}" is now up for auction!`, 'gold', 'Auction Live')
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // PLACE BID — updates auction + members in Supabase
-  // ═══════════════════════════════════════════════════════════════
   const placeBid = async (auctionId) => {
     const amount = parseInt(bidAmounts[auctionId])
     if (!amount || amount <= 0) {
@@ -84,14 +90,9 @@ export default function Auctions({ ctx }) {
 
     const newBids = [...(auction.bids || []), { bidder: currentUser.name, amount, time: Date.now() }]
 
-    // 1. Update auction in DB
     const { error: auctionErr } = await supabase
       .from('auctions')
-      .update({
-        current_bid: amount,
-        top_bidder: currentUser.name,
-        bids: newBids,
-      })
+      .update({ current_bid: amount, top_bidder: currentUser.name, bids: newBids })
       .eq('id', auctionId)
 
     if (auctionErr) {
@@ -100,28 +101,22 @@ export default function Auctions({ ctx }) {
       return
     }
 
-    // 2. Deduct coins from bidder in DB
-    const { error: bidderErr } = await supabase
+    await supabase
       .from('members')
       .update({ coins: bidder.coins - amount })
       .eq('id', bidder.id)
 
-    if (bidderErr) console.error('Bidder coin deduction failed:', bidderErr)
-
-    // 3. Refund previous top bidder in DB
     if (auction.topBidder) {
       const prev = members.find(m => m.name === auction.topBidder)
       if (prev) {
-        const { error: refundErr } = await supabase
+        await supabase
           .from('members')
           .update({ coins: prev.coins + auction.currentBid })
           .eq('id', prev.id)
-        if (refundErr) console.error('Refund failed:', refundErr)
       }
     }
 
-    // 4. Update local state so UI feels instant
-    setMembers(members.map(m => {
+    setMembers(prev => prev.map(m => {
       if (m.id === bidder.id) return { ...m, coins: m.coins - amount }
       if (auction.topBidder && m.name === auction.topBidder) return { ...m, coins: m.coins + auction.currentBid }
       return m
@@ -134,23 +129,19 @@ export default function Auctions({ ctx }) {
       bids: newBids,
     }
 
-    // Snipe protection
     const timeLeft = auction.endsAt - Date.now()
     if (timeLeft < 60000 && timeLeft > 0) {
       const newEnd = Date.now() + 120000
       updatedAuction.endsAt = newEnd
       await supabase.from('auctions').update({ ends_at: newEnd }).eq('id', auctionId)
-      addToast('⏱️ Timer extended 2 mins (snipe protection)', 'blue', 'Extension')
+      addToast('Timer extended 2 mins (snipe protection)', 'blue', 'Extension')
     }
 
-    setAuctions(auctions.map(a => a.id === auctionId ? updatedAuction : a))
+    setAuctions(prev => prev.map(a => a.id === auctionId ? updatedAuction : a))
     setBidAmounts({ ...bidAmounts, [auctionId]: '' })
     addToast(`Bid of ${amount} coins placed on ${auction.name}.`, 'gold', 'Bid Placed')
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // END AUCTION — updates DB
-  // ═══════════════════════════════════════════════════════════════
   const endAuction = async (auctionId) => {
     if (!isMaster) return
     const auction = auctions.find(a => a.id === auctionId)
@@ -164,7 +155,7 @@ export default function Auctions({ ctx }) {
         addToast(`Couldn't end auction: ${error.message}`, 'red', 'Save Failed')
         return
       }
-      setAuctions(auctions.map(a => a.id === auctionId ? { ...a, status: 'ended' } : a))
+      setAuctions(prev => prev.map(a => a.id === auctionId ? { ...a, status: 'ended' } : a))
       addToast(`"${auction.name}" ended early.`, 'red', 'Auction Ended')
     }
   }
@@ -197,24 +188,100 @@ export default function Auctions({ ctx }) {
 
       {showCreate && (
         <div className="card mb-6 border-gold/40">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <input className="input" placeholder="Item name" value={newItem.name}
-              onChange={e => setNewItem({ ...newItem, name: e.target.value })} />
-            <select className="input" value={newItem.rarity}
-              onChange={e => setNewItem({ ...newItem, rarity: e.target.value })}>
-              <option value="material">Material</option>
-              <option value="uncommon">Uncommon</option>
-              <option value="rare">Rare</option>
-              <option value="epic">Epic</option>
-              <option value="legendary">Legendary</option>
-            </select>
-            <input className="input" type="number" placeholder="Start bid" value={newItem.startBid}
-              onChange={e => setNewItem({ ...newItem, startBid: parseInt(e.target.value) || 0 })} />
-            <div className="flex gap-2">
-              <input className="input" type="number" placeholder="Duration (min)" value={newItem.duration}
-                onChange={e => setNewItem({ ...newItem, duration: parseInt(e.target.value) || 60 })} />
-              <button onClick={createAuction} className="btn-gold whitespace-nowrap">Start Auction</button>
+          <div className="text-sm font-bold text-text-dim uppercase tracking-wider mb-4">New Auction</div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-xs text-text-dim uppercase tracking-wider font-bold mb-1">
+                Item Name
+              </label>
+              <input
+                className="input"
+                placeholder="e.g. Dragon Scale Armor"
+                value={newItem.name}
+                onChange={e => setNewItem({ ...newItem, name: e.target.value })}
+              />
             </div>
+            <div>
+              <label className="block text-xs text-text-dim uppercase tracking-wider font-bold mb-1">
+                Rarity
+              </label>
+              <select
+                className="input"
+                value={newItem.rarity}
+                onChange={e => setNewItem({ ...newItem, rarity: e.target.value })}
+              >
+                <option value="material">Material</option>
+                <option value="uncommon">Uncommon</option>
+                <option value="rare">Rare</option>
+                <option value="epic">Epic</option>
+                <option value="legendary">Legendary</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-xs text-text-dim uppercase tracking-wider font-bold mb-1">
+              Description (optional)
+            </label>
+            <input
+              className="input"
+              placeholder="e.g. Epic weapon drop from World Boss"
+              value={newItem.description}
+              onChange={e => setNewItem({ ...newItem, description: e.target.value })}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-xs text-text-dim uppercase tracking-wider font-bold mb-1">
+                Starting Bid
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  className="input flex-1"
+                  type="number"
+                  min="1"
+                  placeholder="100"
+                  value={newItem.startBid}
+                  onChange={e => setNewItem({ ...newItem, startBid: e.target.value })}
+                />
+                <span className="text-xs text-text-dim whitespace-nowrap">coins</span>
+              </div>
+              <div className="text-[10px] text-text-dim mt-1">
+                The minimum amount the first bidder must offer.
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs text-text-dim uppercase tracking-wider font-bold mb-1">
+                Duration
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  className="input flex-1"
+                  type="number"
+                  min="1"
+                  placeholder="60"
+                  value={newItem.duration}
+                  onChange={e => setNewItem({ ...newItem, duration: e.target.value })}
+                />
+                <span className="text-xs text-text-dim whitespace-nowrap">minutes</span>
+              </div>
+              <div className="text-[10px] text-text-dim mt-1">
+                How long the auction stays open before it ends.
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 items-center">
+            <button onClick={createAuction} className="btn-gold">
+              Start Auction
+            </button>
+            <span className="text-xs text-text-dim">
+              {parseInt(newItem.duration) > 0
+                ? `Ends ${new Date(Date.now() + (parseInt(newItem.duration) || 60) * 60000).toLocaleTimeString()}`
+                : ''}
+            </span>
           </div>
         </div>
       )}
@@ -228,17 +295,21 @@ export default function Auctions({ ctx }) {
             return (
               <div key={auction.id} className={`card ${isWinning ? 'border-green-500/40 bg-green-500/5' : ''}`}>
                 <div className="flex items-start justify-between">
-                  <div>
-                    <div className="font-bold text-gold-light">{auction.name}</div>
+                  <div className="min-w-0">
+                    <div className="font-bold text-gold-light truncate">{auction.name}</div>
                     <div className="text-xs text-text-dim">
                       <span className={`badge badge-${auction.rarity}`}>{auction.rarity}</span>
                     </div>
                   </div>
-                  <div className="text-right">
+                  <div className="text-right flex-shrink-0 ml-2">
                     <div className="text-xs text-text-dim">Ends in</div>
                     <div className="font-bold text-red-400">{formatTime(auction.endsAt)}</div>
                   </div>
                 </div>
+
+                {auction.description && (
+                  <div className="text-xs text-text-dim mt-2 italic">{auction.description}</div>
+                )}
 
                 <div className="flex items-center justify-between mt-3">
                   <div>
@@ -253,16 +324,24 @@ export default function Auctions({ ctx }) {
 
                 {currentUser && auction.status === 'active' && (
                   <div className="flex gap-2 mt-3">
-                    <input className="input text-sm flex-1" type="number"
+                    <input
+                      className="input text-sm flex-1"
+                      type="number"
                       placeholder={`Min ${auction.currentBid + 1}`}
                       value={bidAmounts[auction.id] || ''}
-                      onChange={e => setBidAmounts({ ...bidAmounts, [auction.id]: e.target.value })} />
-                    <button onClick={() => placeBid(auction.id)} className="btn-gold text-sm px-3">Bid</button>
+                      onChange={e => setBidAmounts({ ...bidAmounts, [auction.id]: e.target.value })}
+                    />
+                    <button onClick={() => placeBid(auction.id)} className="btn-gold text-sm px-3">
+                      Bid
+                    </button>
                   </div>
                 )}
 
                 {isMaster && (
-                  <button onClick={() => endAuction(auction.id)} className="text-xs text-red-400 hover:text-red-300 mt-2">
+                  <button
+                    onClick={() => endAuction(auction.id)}
+                    className="text-xs text-red-400 hover:text-red-300 mt-2"
+                  >
                     End Early
                   </button>
                 )}

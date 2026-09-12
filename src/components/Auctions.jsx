@@ -173,6 +173,53 @@ export default function Auctions({ ctx }) {
     }
   }
 
+  // ── Delete auction ──
+  // Removes the auction entirely. If it was active with a top bidder,
+  // that bidder gets their coins refunded (since the item never changed hands).
+  const deleteAuction = async (auctionId) => {
+    if (!isElder) return
+    const auction = auctions.find(a => a.id === auctionId)
+    if (!auction) return
+
+    const refundNote = auction.status === 'active' && auction.topBidder
+      ? `\n\n${auction.topBidder} will be refunded ${auction.currentBid.toLocaleString()} coins.`
+      : ''
+
+    if (!window.confirm(`Delete "${auction.name}" permanently?${refundNote}`)) return
+
+    // Refund the current top bidder if the auction is still active
+    if (auction.status === 'active' && auction.topBidder && auction.currentBid > 0) {
+      const bidder = members.find(m => m.name === auction.topBidder)
+      if (bidder) {
+        const { error: refundErr } = await supabase
+          .from('members')
+          .update({ coins: bidder.coins + auction.currentBid })
+          .eq('id', bidder.id)
+        if (refundErr) {
+          console.error('Refund on delete failed:', refundErr)
+        } else {
+          setMembers(prev => prev.map(m =>
+            m.id === bidder.id ? { ...m, coins: m.coins + auction.currentBid } : m
+          ))
+        }
+      }
+    }
+
+    const { error } = await supabase
+      .from('auctions')
+      .delete()
+      .eq('id', auctionId)
+
+    if (error) {
+      console.error('Delete auction failed:', error)
+      addToast(`Couldn't delete auction: ${error.message}`, 'red', 'Delete Failed')
+      return
+    }
+
+    setAuctions(prev => prev.filter(a => a.id !== auctionId))
+    addToast(`"${auction.name}" removed.`, 'red', 'Auction Deleted')
+  }
+
   const formatTime = (endsAt) => {
     const diff = endsAt - Date.now()
     if (diff <= 0) return 'Ended'
@@ -398,13 +445,23 @@ export default function Auctions({ ctx }) {
                   </div>
                 )}
 
-                {isMaster && (
-                  <button
-                    onClick={() => endAuction(auction.id)}
-                    className="text-xs text-red-400 hover:text-red-300 mt-2"
-                  >
-                    End Early
-                  </button>
+                {isElder && (
+                  <div className="flex gap-3 mt-3 pt-2 border-t border-gold/10">
+                    {isMaster && (
+                      <button
+                        onClick={() => endAuction(auction.id)}
+                        className="text-xs text-yellow-400 hover:text-yellow-300"
+                      >
+                        End Early
+                      </button>
+                    )}
+                    <button
+                      onClick={() => deleteAuction(auction.id)}
+                      className="text-xs text-red-400 hover:text-red-300 ml-auto"
+                    >
+                      🗑 Delete
+                    </button>
+                  </div>
                 )}
               </div>
             )
@@ -427,7 +484,6 @@ export default function Auctions({ ctx }) {
 
               return (
                 <div key={a.id} className="rounded border border-gold/15 bg-void/40 p-3">
-                  {/* Header row: name + rarity + winner summary */}
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -456,23 +512,31 @@ export default function Auctions({ ctx }) {
                     </div>
                   </div>
 
-                  {/* Meta row: bids count + toggle */}
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-gold/10">
                     <div className="text-[10px] text-text-dim">
                       {totalBids} {totalBids === 1 ? 'bid' : 'bids'}
                       {a.endsAt ? ` · ended ${new Date(a.endsAt).toLocaleString()}` : ''}
                     </div>
-                    {totalBids > 0 && (
-                      <button
-                        onClick={() => toggleEndedExpanded(a.id)}
-                        className="text-[10px] uppercase tracking-wider text-gold-light hover:text-gold-bright"
-                      >
-                        {isExpanded ? '▲ Hide bids' : '▼ Show all bids'}
-                      </button>
-                    )}
+                    <div className="flex items-center gap-3">
+                      {totalBids > 0 && (
+                        <button
+                          onClick={() => toggleEndedExpanded(a.id)}
+                          className="text-[10px] uppercase tracking-wider text-gold-light hover:text-gold-bright"
+                        >
+                          {isExpanded ? '▲ Hide bids' : '▼ Show all bids'}
+                        </button>
+                      )}
+                      {isElder && (
+                        <button
+                          onClick={() => deleteAuction(a.id)}
+                          className="text-[10px] text-red-400 hover:text-red-300"
+                        >
+                          🗑 Delete
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Expandable full bid chain */}
                   {isExpanded && totalBids > 0 && (
                     <div className="mt-2 pt-2 border-t border-gold/10 space-y-1">
                       {bids.map((b, idx) => {

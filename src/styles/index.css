@@ -12,10 +12,32 @@
   }
 
   body {
-    background: #0a0706;
+    background-color: #0a0706;
+    background-image:
+      linear-gradient(
+        180deg,
+        rgba(10, 7, 6, 0.92) 0%,
+        rgba(10, 7, 6, 0.78) 30%,
+        rgba(10, 7, 6, 0.82) 65%,
+        rgba(10, 7, 6, 0.94) 100%
+      ),
+      radial-gradient(
+        ellipse at center,
+        rgba(10, 7, 6, 0) 0%,
+        rgba(10, 7, 6, 0.55) 100%
+      ),
+      url('https://cache.wemixplay.com/ADMIN-CONSOLE/GAME_DETAIL_INFO/SCREEN_SHOT/legendofymir/43f6b42a-790d-46fc-9864-e69030f3f7c1-02_GameMedia_1920x1080_3.jpg');
+    background-size: cover, cover, cover;
+    background-position: center top, center, center;
+    background-attachment: fixed, fixed, fixed;
+    background-repeat: no-repeat;
     color: #e0cdb0;
     font-family: 'Inter', sans-serif;
     min-height: 100vh;
+  }
+
+  html {
+    scroll-behavior: smooth;
   }
 
   ::-webkit-scrollbar {
@@ -42,7 +64,7 @@
     @apply bg-gradient-to-r from-[#3d0000] to-[#951c1c] text-white font-bold px-4 py-2 rounded transition-all hover:shadow-lg hover:shadow-blood/50 disabled:opacity-50;
   }
   .card {
-    @apply bg-card border border-gold/20 rounded p-4 transition-all hover:border-gold/40;
+    @apply bg-card/75 border border-gold/20 rounded p-4 transition-all hover:border-gold/40 backdrop-blur-sm;
   }
   .input {
     @apply bg-[#0a0b0f]/80 border border-gold/20 text-text rounded px-3 py-2 w-full outline-none focus:border-gold transition-all;
@@ -61,5 +83,90 @@
   }
   .badge-blue {
     @apply bg-blue-900/30 text-blue-400 border border-blue-500/40;
+  }
+}
+
+/* ── MODAL SYSTEM ────────────────────────────────────────────── */
+/* These are plain CSS (not @apply) because Tailwind's @apply can't   */
+/* reference the runtime-computed backdrop-filter cleanly, and this  */
+/* needs to work regardless of Tailwind config extensions.            */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: overlayFadeIn 0.15s ease both;
+}
+
+.modal {
+  background: #221a16;
+  border: 1px solid rgba(200, 146, 42, 0.45);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.85),
+    0 0 60px rgba(201, 151, 42, 0.08);
+  animation: modalPopIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+  position: relative;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid rgba(200, 146, 42, 0.2);
+}
+
+.modal-title {
+  font-family: 'Spectral', serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #e6b048;
+  letter-spacing: 0.5px;
+}
+
+.modal-body {
+  padding: 22px;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 16px 22px;
+  border-top: 1px solid rgba(200, 146, 42, 0.2);
+}
+
+/* Stack spacing helper — used by modal bodies with class="space-y-4" */
+.space-y-4 > * + * {
+  margin-top: 16px;
+}
+
+@keyframes overlayFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalPopIn {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay,
+  .modal {
+    animation: none;
   }
 }

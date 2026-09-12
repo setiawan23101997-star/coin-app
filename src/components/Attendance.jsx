@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 
 const eventTypes = [
   'Clan Annihilation',
@@ -8,6 +8,23 @@ const eventTypes = [
   'World Boss',
 ]
 
+function formatGMT8(ts = Date.now(), opts = {}) {
+  return new Date(ts).toLocaleString('en-GB', {
+    timeZone: 'Asia/Singapore',
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+    ...opts,
+  })
+}
+
+function formatGMT8Short(ts = Date.now()) {
+  return new Date(ts).toLocaleString('en-GB', {
+    timeZone: 'Asia/Singapore',
+    day: '2-digit', month: 'short',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+}
+
 export default function Attendance({ ctx }) {
   const { members, setMembers, attendanceLogs, setAttendanceLogs, currentUser, addToast, supabase } = ctx
   const [selectedEvent, setSelectedEvent] = useState(eventTypes[0])
@@ -15,13 +32,20 @@ export default function Attendance({ ctx }) {
   const [selectedMembers, setSelectedMembers] = useState({})
   const [search, setSearch] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [expandedLogs, setExpandedLogs] = useState({})
+  const [deletingId, setDeletingId] = useState(null)
+  const [now, setNow] = useState(Date.now())
 
-  const isElder = currentUser?.role === 'Elder' || currentUser?.role === 'Master'
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const isElder = currentUser?.role === 'Elder' || currentUser?.role === 'Master' || currentUser?.role === 'Admin'
   const filtered = members.filter(m => m.name.toLowerCase().includes(search.toLowerCase()))
 
-  const toggleMember = (id) => {
-    setSelectedMembers(prev => ({ ...prev, [id]: !prev[id] }))
-  }
+  const toggleMember = (id) => setSelectedMembers(prev => ({ ...prev, [id]: !prev[id] }))
+  const toggleLog = (id) => setExpandedLogs(prev => ({ ...prev, [id]: !prev[id] }))
 
   const recordAttendance = async () => {
     const ids = Object.keys(selectedMembers).filter(k => selectedMembers[k])
@@ -38,9 +62,9 @@ export default function Attendance({ ctx }) {
 
     setSubmitting(true)
 
-    const now = new Date()
-    const dateStr = now.toLocaleDateString()
-    const ts = now.getTime()
+    const nowDate = new Date()
+    const dateStr = nowDate.toLocaleDateString()
+    const ts = nowDate.getTime()
 
     const targets = members.filter(m => ids.includes(String(m.id)))
 
@@ -82,6 +106,7 @@ export default function Attendance({ ctx }) {
       recorded_by: currentUser?.name || 'System',
       attendees: targets.map(m => ({
         name: m.name,
+        cls: m.cls,
         qualifier: 'full',
         earned: coinValue,
       })),
@@ -113,17 +138,243 @@ export default function Attendance({ ctx }) {
     addToast(`${ids.length} members recorded for ${selectedEvent} (+${coinValue} coins each).`, 'gold', 'Attendance Saved')
   }
 
+  const deleteLog = async (log) => {
+    if (!isElder) {
+      addToast('Only Elders and Masters can delete attendance.', 'red', 'Not Allowed')
+      return
+    }
+
+    const attendees = log.attendees || []
+    const totalCoins = attendees.reduce((s, a) => s + (a.earned || 0), 0)
+
+    const confirmMsg =
+      `Delete "${log.event}" attendance from ${formatGMT8Short(log.ts || log.id)}?\n\n` +
+      `This will reverse:\n` +
+      `• ${attendees.length} member(s)\n` +
+      `• ${totalCoins.toLocaleString()} coins total\n\n` +
+      `This cannot be undone.`
+
+    if (!window.confirm(confirmMsg)) return
+
+    setDeletingId(log.id)
+
+    const reversed = await Promise.all(attendees.map(async (a) => {
+      const member = members.find(m => m.name === a.name)
+      if (!member) return { name: a.name, ok: true, skipped: true }
+
+      const newCoins = Math.max(0, (member.coins || 0) - (a.earned || 0))
+      const newAttendance = Math.max(0, (member.attendance || 0) - 1)
+
+      const filteredLog = (member.attend_log || []).filter(entry => {
+        if (entry.event !== a.event && entry.event !== log.event) return true
+        const entryTs = entry.ts || 0
+        if (entryTs && log.ts && entryTs === log.ts) return false
+        if (entry.event === log.event && entry.date === log.date) return false
+        return true
+      })
+
+      const { error } = await supabase
+        .from('members')
+        .update({
+          coins: newCoins,
+          attendance: newAttendance,
+          attend_log: filteredLog,
+        })
+        .eq('id', member.id)
+
+      if (error) {
+        console.error(`Failed to reverse ${a.name}:`, error)
+        return { name: a.name, ok: false, error }
+      }
+      return { name: a.name, ok: true, memberId: member.id, newCoins, newAttendance, filteredLog }
+    }))
+
+    const failed = reversed.filter(r => !r.ok)
+    if (failed.length > 0) {
+      addToast(`Couldn't reverse all members: ${failed.map(f => f.name).join(', ')}`, 'red', 'Partial Reversal')
+    }
+
+    setMembers(prev => prev.map(m => {
+      const r = reversed.find(x => x.memberId === m.id)
+      if (!r) return m
+      return {
+        ...m,
+        coins: r.newCoins,
+        attendance: r.newAttendance,
+        attend_log: r.filteredLog,
+      }
+    }))
+
+    const { error: delErr } = await supabase
+      .from('attendance_logs')
+      .delete()
+      .eq('id', log.id)
+
+    if (delErr) {
+      console.error('Failed to delete log row:', delErr)
+      addToast(`Couldn't remove the log: ${delErr.message}`, 'red', 'Delete Failed')
+      setDeletingId(null)
+      return
+    }
+
+    setAttendanceLogs(prev => prev.filter(l => l.id !== log.id))
+    setDeletingId(null)
+    addToast(
+      `Attendance reversed — ${attendees.length} member(s), ${totalCoins.toLocaleString()} coins removed.`,
+      'red',
+      'Attendance Deleted'
+    )
+  }
+
+  const sortedLogs = [...attendanceLogs].sort((a, b) => {
+    const ta = a.ts || Number(a.id) || new Date(a.date).getTime() || 0
+    const tb = b.ts || Number(b.id) || new Date(b.date).getTime() || 0
+    return tb - ta
+  })
+
   return (
     <div>
-      <h1 className="font-spectral text-2xl font-bold text-gold-light mb-2">Attendance</h1>
-      <p className="text-text-dim text-sm mb-6">Record attendance for events and award coins</p>
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+        <div>
+          <h1 className="font-spectral text-2xl font-bold text-gold-light mb-2">Attendance</h1>
+          <p className="text-text-dim text-sm">
+            {isElder ? 'Record attendance for events and award coins' : 'Attendance history for clan events'}
+          </p>
+        </div>
 
-      {!isElder ? (
-        <div className="card text-center py-12">
-          <div className="text-4xl mb-4">🔒</div>
-          <div className="text-text-dim">Only Elders and Masters can record attendance.</div>
+        <div className="card px-4 py-2 border-gold/30 flex items-center gap-3">
+          <div className="text-lg">🕒</div>
+          <div>
+            <div className="text-[9px] font-bold uppercase tracking-widest text-gold-dim">
+              Server Time · GMT+8
+            </div>
+            <div className="font-mono text-sm text-gold-bright tabular-nums">
+              {formatGMT8(now)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Recent Logs — everyone can see */}
+      {sortedLogs.length > 0 ? (
+        <div className="card mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-bold text-text-dim uppercase tracking-wider">
+              Recent Logs ({sortedLogs.length})
+            </div>
+            <div className="text-[10px] text-text-dim uppercase tracking-wider">
+              Newest first · GMT+8
+            </div>
+          </div>
+          <div className="space-y-2 max-h-[600px] overflow-y-auto">
+            {sortedLogs.slice(0, 30).map(log => {
+              const isExpanded = !!expandedLogs[log.id]
+              const attendees = log.attendees || []
+              const coinEach = attendees[0]?.earned ?? 0
+              const logTs = log.ts || Number(log.id) || new Date(log.date).getTime() || 0
+              const isDeleting = deletingId === log.id
+
+              return (
+                <div key={log.id} className="rounded border border-gold/15 bg-void/40">
+                  <div
+                    onClick={() => toggleLog(log.id)}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2.5 px-3 cursor-pointer hover:bg-gold/5 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-wrap">
+                      <span className="text-xs text-gold-dim">{isExpanded ? '▾' : '▸'}</span>
+                      <span className="font-semibold text-gold-light">{log.event}</span>
+                      <span className="text-xs text-text-dim font-mono tabular-nums">
+                        {formatGMT8Short(logTs)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-xs text-green-400 font-semibold">
+                        +{coinEach.toLocaleString()} coins each
+                      </span>
+                      <span className="text-xs text-text-dim">{log.members} members</span>
+                      <span className="text-xs text-text-dim">
+                        by <span className="text-gold">{log.recorded_by || log.recordedBy}</span>
+                      </span>
+                      {isElder && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            deleteLog(log)
+                          }}
+                          disabled={isDeleting}
+                          className="text-[10px] px-2 py-1 rounded border border-red-500/40 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                          title="Reverse & delete this attendance"
+                        >
+                          {isDeleting ? '…' : '🗑 Delete'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="border-t border-gold/10 px-3 py-3 bg-void/60">
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-gold-light mb-2">
+                        Attendees ({attendees.length})
+                      </div>
+                      {attendees.length === 0 ? (
+                        <div className="text-xs text-text-dim italic">No attendee details saved for this log.</div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                          {attendees.map((a, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center justify-between gap-2 rounded border border-gold/15 bg-gold/5 px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="font-semibold text-text text-sm truncate">{a.name}</div>
+                                {a.cls && <div className="text-[10px] text-text-dim">{a.cls}</div>}
+                              </div>
+                              <div className="text-right flex-shrink-0">
+                                <div className="text-xs font-bold text-green-400">
+                                  +{(a.earned || 0).toLocaleString()}
+                                </div>
+                                <div className="text-[9px] uppercase tracking-wider text-text-dim">
+                                  {a.qualifier || 'full'}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-3 pt-3 border-t border-gold/10 flex flex-wrap justify-between items-center gap-2 text-[10px] uppercase tracking-wider text-text-dim">
+                        <span>
+                          Total awarded:{' '}
+                          <span className="text-gold-light font-bold normal-case">
+                            {attendees.reduce((s, a) => s + (a.earned || 0), 0).toLocaleString()} coins
+                          </span>
+                        </span>
+                        <span>
+                          Recorded by{' '}
+                          <span className="text-gold-light normal-case">
+                            {log.recorded_by || log.recordedBy}
+                          </span>
+                          {' · '}
+                          <span className="text-gold-light normal-case font-mono">
+                            {formatGMT8(logTs)}
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         </div>
       ) : (
+        <div className="card text-center py-12 mb-6">
+          <div className="text-3xl mb-3 opacity-50">📋</div>
+          <div className="text-text-dim">No attendance recorded yet.</div>
+        </div>
+      )}
+
+      {/* Record form — Elder / Master only, hidden entirely for members */}
+      {isElder && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="card md:col-span-1">
             <div className="text-sm font-bold text-text-dim uppercase tracking-wider mb-3">Event</div>
@@ -170,6 +421,10 @@ export default function Attendance({ ctx }) {
             <div className="text-xs text-text-dim mt-3">
               Each selected member will receive <span className="text-gold-light font-bold">{coinAmount || 0}</span> coins.
             </div>
+
+            <div className="mt-5 pt-4 border-t border-gold/20 text-[10px] text-text-dim uppercase tracking-wider">
+              Session time: <span className="text-gold-light font-mono normal-case">{formatGMT8(now)}</span>
+            </div>
           </div>
 
           <div className="card md:col-span-2">
@@ -214,26 +469,6 @@ export default function Attendance({ ctx }) {
             >
               {submitting ? 'Saving...' : 'Submit Attendance'}
             </button>
-          </div>
-        </div>
-      )}
-
-      {attendanceLogs.length > 0 && (
-        <div className="card mt-6">
-          <div className="text-sm font-bold text-text-dim uppercase tracking-wider mb-3">Recent Logs</div>
-          <div className="space-y-2 max-h-[300px] overflow-y-auto">
-            {attendanceLogs.slice(0, 10).map(log => (
-              <div key={log.id} className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-gold/10">
-                <div>
-                  <span className="font-semibold text-gold-light">{log.event}</span>
-                  <span className="text-xs text-text-dim ml-2">{log.date}</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-text-dim">{log.members} members</span>
-                  <span className="text-xs text-text-dim">by {log.recorded_by || log.recordedBy}</span>
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       )}

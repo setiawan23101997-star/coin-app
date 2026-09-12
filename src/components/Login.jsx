@@ -6,22 +6,20 @@ export default function Login({ ctx }) {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
-  const allUsers = ctx.members || []
-
   const handleSubmit = (e) => {
     e.preventDefault()
-    
+
     if (!username || !password) {
       setError('Please enter both username and password.')
       return
     }
-    
+
     setIsLoading(true)
     setError('')
-    
+
     const success = ctx.handleLogin(username, password)
     setIsLoading(false)
-    
+
     if (!success) {
       setError('Invalid username or password.')
     }
@@ -32,7 +30,7 @@ export default function Login({ ctx }) {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="text-6xl mb-4">🪙</div>
-          <h1 className="font-spectral text-3xl font-bold text-gold-light">Coin & Bids</h1>
+          <h1 className="font-spectral text-3xl font-bold text-gold-light">PeakyBlinder</h1>
           <p className="text-text-dim text-sm mt-2">Clan Management System</p>
         </div>
 
@@ -56,6 +54,7 @@ export default function Login({ ctx }) {
                 onChange={(e) => setUsername(e.target.value)}
                 disabled={isLoading}
                 autoFocus
+                autoComplete="username"
               />
             </div>
 
@@ -70,6 +69,7 @@ export default function Login({ ctx }) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={isLoading}
+                autoComplete="current-password"
               />
             </div>
 
@@ -81,39 +81,11 @@ export default function Login({ ctx }) {
               {isLoading ? '⏳ Logging in...' : '🔐 Login'}
             </button>
           </form>
-
-          <div className="mt-6 pt-6 border-t border-gold/20">
-            <p className="text-text-dim text-xs uppercase tracking-wider font-bold text-center mb-3">
-              📋 Available Accounts ({allUsers.length})
-            </p>
-            {allUsers.length === 0 ? (
-              <div className="text-center text-text-dim text-sm py-4">
-                No accounts found. Please contact your Master.
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-2 text-xs max-h-[200px] overflow-y-auto">
-                {allUsers.map((acc) => (
-                  <div
-                    key={acc.id}
-                    className="bg-void/50 border border-gold/10 rounded p-2 text-center cursor-pointer hover:border-gold/40 hover:bg-gold/5 transition-colors"
-                    onClick={() => {
-                      setUsername(acc.username)
-                      setPassword(acc.password)
-                      setError('')
-                    }}
-                  >
-                    <div className="font-semibold text-gold-light">{acc.name}</div>
-                    <div className="text-text-dim text-[10px]">{acc.username}</div>
-                    <div className="text-text-dim text-[8px] opacity-60">Role: {acc.role}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <p className="text-text-dim text-xs text-center mt-3">
-              Click an account above, then click Login
-            </p>
-          </div>
         </div>
+
+        <p className="text-text-dim text-xs text-center mt-4">
+          Access is by invitation only. Contact your Master if you need an account.
+        </p>
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import Layout from './components/Layout'
 import Dashboard from './components/Dashboard'
@@ -21,15 +21,29 @@ function App() {
   const [toasts, setToasts] = useState([])
   const [loading, setLoading] = useState(true)
 
+  // Tracks which auction IDs this browser instance has already auto-ended,
+  // so two tabs (or the 5s poll racing the auto-end tick) don't double-fire.
+  const autoEndedRef = useRef(new Set())
+
   const addToast = (msg, type = 'gold', title = '') => {
     const id = Date.now() + Math.random()
     setToasts(prev => [...prev, { id, msg, type, title }])
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
   }
 
+  /**
+   * Normalize a Supabase auction row into the client-side shape.
+   *
+   * `distributed_by` and `ended_at` are both optional columns — if they don't
+   * exist in your DB yet, the fields resolve to null / 0 and everything else
+   * still works. Add them with:
+   *   alter table auctions add column if not exists distributed_by text;
+   *   alter table auctions add column if not exists ended_at bigint;
+   */
   const normalizeAuction = (a) => ({
     id: String(a.id),
     name: a.name ?? '',
+    description: a.description ?? '',
     rarity: a.rarity ?? 'epic',
     status: a.status ?? 'active',
     currentBid: Number(a.current_bid ?? a.currentBid) || 0,
@@ -37,6 +51,8 @@ function App() {
     topBidder: a.top_bidder ?? a.topBidder ?? null,
     endsAt: Number(a.ends_at ?? a.endsAt) || 0,
     startedAt: Number(a.started_at ?? a.startedAt) || 0,
+    endedAt: Number(a.ended_at ?? a.endedAt) || 0,
+    distributedBy: a.distributed_by ?? a.distributedBy ?? null,
     bids: (() => {
       try {
         if (typeof a.bids === 'string') return JSON.parse(a.bids)
@@ -76,6 +92,11 @@ function App() {
     })(),
   })
 
+  const filterVisibleMembers = (list, viewer) => {
+    if (viewer?.role === 'Admin') return list
+    return list.filter(m => m.role !== 'Admin')
+  }
+
   const loadAllData = async () => {
     try {
       setLoading(true)
@@ -87,8 +108,13 @@ function App() {
       if (membersError) throw membersError
       console.log('Loaded members:', membersData?.length || 0)
 
+      let persistedViewer = null
+      const savedUser = localStorage.getItem('currentUser')
+      if (savedUser) {
+        try { persistedViewer = JSON.parse(savedUser) } catch { persistedViewer = null }
+      }
+
       if (!membersData || membersData.length === 0) {
-        console.log('No members found, creating defaults...')
         const defaultMembers = [
           { id: 1, name: 'Thomas Shelby', username: 'thomas', password: 'master123', cls: 'Archer', coins: 1000, power: 12345, attendance: 0, role: 'Master' },
           { id: 2, name: 'Arthur Shelby', username: 'arthur', password: 'member123', cls: 'Berserker', coins: 500, power: 11000, attendance: 0, role: 'Member' },
@@ -100,7 +126,8 @@ function App() {
         }
         setMembers(defaultMembers)
       } else {
-        setMembers(membersData.map(normalizeMember))
+        const normalized = membersData.map(normalizeMember)
+        setMembers(filterVisibleMembers(normalized, persistedViewer))
       }
 
       const { data: auctionsData, error: auctionsError } = await supabase
@@ -115,13 +142,14 @@ function App() {
       if (logsError) throw logsError
       setAttendanceLogs(logsData || [])
 
-      const savedUser = localStorage.getItem('currentUser')
       if (savedUser) {
         const user = JSON.parse(savedUser)
         const currentMembers = membersData || []
         const found = currentMembers.find(m => Number(m.id) === Number(user.id))
         if (found) {
-          setCurrentUser(found)
+          const normalized = normalizeMember(found)
+          setCurrentUser(normalized)
+          setMembers(filterVisibleMembers((membersData || []).map(normalizeMember), normalized))
         } else {
           localStorage.removeItem('currentUser')
         }
@@ -143,12 +171,103 @@ function App() {
       const { data: membersData } = await supabase.from('members').select('*').order('id')
       const { data: auctionsData } = await supabase.from('auctions').select('*')
       const { data: logsData } = await supabase.from('attendance_logs').select('*')
-      if (membersData) setMembers(membersData.map(normalizeMember))
+      if (membersData) {
+        const normalized = membersData.map(normalizeMember)
+        setMembers(filterVisibleMembers(normalized, currentUser))
+      }
       if (auctionsData) setAuctions(auctionsData.map(normalizeAuction))
       if (logsData) setAttendanceLogs(logsData)
     }, 5000)
     return () => clearInterval(interval)
-  }, [])
+  }, [currentUser])
+
+  /**
+   * Auto-end expired auctions.
+   *
+   * Runs every 5s. Any auction where status === 'active' and endsAt has passed
+   * gets committed as 'ended' — winner = current top bidder, final price =
+   * current bid. Persists to Supabase, then patches local state so the
+   * Dashboard's "Recently won" strip picks it up immediately.
+   *
+   * Also stamps `ended_at` and `distributed_by: 'System'` so ended-by-timer
+   * auctions show a proper timestamp and a "System" distributor on the
+   * Auctions page. If those columns don't exist yet, remove the corresponding
+   * keys from the update object below — Supabase will throw "column not found".
+   *
+   * This is best-effort client-side resolution. If nobody has the tab open
+   * when an auction expires, the next person who loads the app (or the 5s
+   * poll) will trigger this and it'll resolve then. For bulletproof behavior,
+   * pair this with a server-side cron or a lazy-on-read UPDATE on your backend.
+   */
+  useEffect(() => {
+    const autoEndExpired = async () => {
+      const now = Date.now()
+
+      const expired = auctions.filter(a =>
+        a.status === 'active' &&
+        a.endsAt > 0 &&
+        a.endsAt <= now &&
+        !autoEndedRef.current.has(a.id)
+      )
+
+      if (expired.length === 0) return
+
+      for (const a of expired) {
+        // Mark locally first so the next tick can't try to end it again,
+        // even if the Supabase write is slow.
+        autoEndedRef.current.add(a.id)
+
+        const winner = a.topBidder || null
+        const finalBid = a.currentBid ?? 0
+        const endedAt = a.endsAt // use the scheduled end, not "now"
+
+        // Only mark as 'System' if there was actually a winner to distribute.
+        // If nobody bid, there's nothing to distribute — leave it null.
+        const distributedBy = winner ? 'System' : null
+
+        const { error } = await supabase
+          .from('auctions')
+          .update({
+            status: 'ended',
+            ended_at: endedAt,
+            distributed_by: distributedBy,
+          })
+          .eq('id', a.id)
+
+        if (error) {
+          console.error(`Auto-end failed for auction ${a.id}:`, error)
+          // Roll back the local guard so we can retry next tick.
+          autoEndedRef.current.delete(a.id)
+          continue
+        }
+
+        setAuctions(prev => prev.map(x =>
+          x.id === a.id
+            ? {
+                ...x,
+                status: 'ended',
+                topBidder: winner,
+                currentBid: finalBid,
+                endsAt: endedAt,
+                endedAt,
+                distributedBy,
+              }
+            : x
+        ))
+
+        if (winner) {
+          addToast(`"${a.name}" ended — won by ${winner} for ${finalBid.toLocaleString()} coins.`, 'gold', 'Auction Ended')
+        } else {
+          addToast(`"${a.name}" ended with no bids.`, 'blue', 'Auction Ended')
+        }
+      }
+    }
+
+    // Run immediately on mount / when auctions list changes, then on a 5s tick.
+    autoEndExpired()
+    const id = setInterval(autoEndExpired, 5000)
+    return () => clearInterval(id)
+  }, [auctions])
 
   const saveMember = async (member) => {
     try {
@@ -205,6 +324,14 @@ function App() {
     }
   }
 
+  const reloadMembers = async () => {
+    const { data } = await supabase.from('members').select('*').order('id')
+    if (data) {
+      const normalized = data.map(normalizeMember)
+      setMembers(filterVisibleMembers(normalized, currentUser))
+    }
+  }
+
   const handleLogin = (username, password) => {
     const user = members.find(m =>
       m.username && m.username.toLowerCase() === username.toLowerCase() &&
@@ -233,6 +360,7 @@ function App() {
     saveMember,
     updateMember,
     deleteMember,
+    reloadMembers,
     auctions,
     setAuctions,
     attendanceLogs,

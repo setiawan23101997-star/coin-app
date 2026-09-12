@@ -3,9 +3,13 @@ import React from 'react'
 export default function Leaderboard({ ctx }) {
   const { members, currentUser } = ctx
 
-  const sortedByCoins = [...members].sort((a, b) => b.coins - a.coins)
-  const sortedByPower = [...members].sort((a, b) => b.power - a.power)
-  const sortedByAttendance = [...members].sort((a, b) => b.attendance - a.attendance)
+  // Admin accounts are hidden from everyone except other Admins.
+  const isAdmin = currentUser?.role === 'Admin'
+  const visibleMembers = isAdmin ? members : members.filter(m => m.role !== 'Admin')
+
+  const sortedByCoins = [...visibleMembers].sort((a, b) => b.coins - a.coins)
+  const sortedByPower = [...visibleMembers].sort((a, b) => b.power - a.power)
+  const sortedByAttendance = [...visibleMembers].sort((a, b) => b.attendance - a.attendance)
 
   const RankRow = ({ rank, member, value, label }) => (
     <div className={`flex items-center gap-3 py-2 border-b border-gold/10 ${member.id === currentUser?.id ? 'bg-gold/5 px-2 rounded' : ''}`}>
@@ -31,9 +35,13 @@ export default function Leaderboard({ ctx }) {
             <span className="text-xl">🪙</span>
             <span className="font-bold text-text-dim uppercase tracking-wider text-sm">Richest</span>
           </div>
-          {sortedByCoins.map((m, i) => (
-            <RankRow key={m.id} rank={i + 1} member={m} value={m.coins.toLocaleString()} label="coins" />
-          ))}
+          {sortedByCoins.length === 0 ? (
+            <div className="text-xs text-text-dim italic py-2">No members yet.</div>
+          ) : (
+            sortedByCoins.map((m, i) => (
+              <RankRow key={m.id} rank={i + 1} member={m} value={m.coins.toLocaleString()} label="coins" />
+            ))
+          )}
         </div>
 
         {/* Most Powerful */}
@@ -42,9 +50,13 @@ export default function Leaderboard({ ctx }) {
             <span className="text-xl">⚔️</span>
             <span className="font-bold text-text-dim uppercase tracking-wider text-sm">Most Powerful</span>
           </div>
-          {sortedByPower.map((m, i) => (
-            <RankRow key={m.id} rank={i + 1} member={m} value={m.power.toLocaleString()} label="power" />
-          ))}
+          {sortedByPower.length === 0 ? (
+            <div className="text-xs text-text-dim italic py-2">No members yet.</div>
+          ) : (
+            sortedByPower.map((m, i) => (
+              <RankRow key={m.id} rank={i + 1} member={m} value={m.power.toLocaleString()} label="power" />
+            ))
+          )}
         </div>
 
         {/* Most Active */}
@@ -53,9 +65,13 @@ export default function Leaderboard({ ctx }) {
             <span className="text-xl">📋</span>
             <span className="font-bold text-text-dim uppercase tracking-wider text-sm">Most Active</span>
           </div>
-          {sortedByAttendance.map((m, i) => (
-            <RankRow key={m.id} rank={i + 1} member={m} value={`${m.attendance}x`} label="events" />
-          ))}
+          {sortedByAttendance.length === 0 ? (
+            <div className="text-xs text-text-dim italic py-2">No members yet.</div>
+          ) : (
+            sortedByAttendance.map((m, i) => (
+              <RankRow key={m.id} rank={i + 1} member={m} value={`${m.attendance}x`} label="events" />
+            ))
+          )}
         </div>
       </div>
     </div>

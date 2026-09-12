@@ -8,7 +8,6 @@ import Auctions from './components/Auctions'
 import Leaderboard from './components/Leaderboard'
 import Login from './components/Login'
 
-// Initialize Supabase
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 const supabase = createClient(supabaseUrl, supabaseKey)
@@ -22,23 +21,74 @@ function App() {
   const [toasts, setToasts] = useState([])
   const [loading, setLoading] = useState(true)
 
-  // Load all data from Supabase
+  const addToast = (msg, type = 'gold', title = '') => {
+    const id = Date.now() + Math.random()
+    setToasts(prev => [...prev, { id, msg, type, title }])
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
+  }
+
+  const normalizeAuction = (a) => ({
+    id: String(a.id),
+    name: a.name ?? '',
+    rarity: a.rarity ?? 'epic',
+    status: a.status ?? 'active',
+    currentBid: Number(a.current_bid ?? a.currentBid) || 0,
+    startBid: Number(a.min_bid ?? a.startBid) || 0,
+    topBidder: a.top_bidder ?? a.topBidder ?? null,
+    endsAt: Number(a.ends_at ?? a.endsAt) || 0,
+    startedAt: Number(a.started_at ?? a.startedAt) || 0,
+    bids: (() => {
+      try {
+        if (typeof a.bids === 'string') return JSON.parse(a.bids)
+        if (Array.isArray(a.bids)) return a.bids
+        return []
+      } catch { return [] }
+    })(),
+    imageName: a.image_name ?? null,
+  })
+
+  const normalizeMember = (m) => ({
+    id: Number(m.id),
+    name: m.name ?? '',
+    username: m.username ?? '',
+    password: m.password ?? '',
+    cls: m.cls ?? '',
+    role: m.role ?? 'Member',
+    coins: Number(m.coins) || 0,
+    power: Number(m.power) || 0,
+    attendance: Number(m.attendance) || 0,
+    auction_wins: Number(m.auction_wins ?? m.auctionWins) || 0,
+    join_date: m.join_date ?? m.joinDate ?? '',
+    discord: m.discord ?? '',
+    tx_log: (() => {
+      try {
+        if (typeof m.tx_log === 'string') return JSON.parse(m.tx_log)
+        if (Array.isArray(m.tx_log)) return m.tx_log
+        return []
+      } catch { return [] }
+    })(),
+    attend_log: (() => {
+      try {
+        if (typeof m.attend_log === 'string') return JSON.parse(m.attend_log)
+        if (Array.isArray(m.attend_log)) return m.attend_log
+        return []
+      } catch { return [] }
+    })(),
+  })
+
   const loadAllData = async () => {
     try {
       setLoading(true)
-      
-      // Load members
+
       const { data: membersData, error: membersError } = await supabase
         .from('members')
         .select('*')
         .order('id')
-      
       if (membersError) throw membersError
-      console.log('✅ Loaded members from Supabase:', membersData?.length || 0)
-      
-      // If no members exist, create default ones
+      console.log('Loaded members:', membersData?.length || 0)
+
       if (!membersData || membersData.length === 0) {
-        console.log('📝 No members found, creating defaults...')
+        console.log('No members found, creating defaults...')
         const defaultMembers = [
           { id: 1, name: 'Thomas Shelby', username: 'thomas', password: 'master123', cls: 'Archer', coins: 1000, power: 12345, attendance: 0, role: 'Master' },
           { id: 2, name: 'Arthur Shelby', username: 'arthur', password: 'member123', cls: 'Berserker', coins: 500, power: 11000, attendance: 0, role: 'Member' },
@@ -50,31 +100,26 @@ function App() {
         }
         setMembers(defaultMembers)
       } else {
-        setMembers(membersData)
+        setMembers(membersData.map(normalizeMember))
       }
 
-      // Load auctions
       const { data: auctionsData, error: auctionsError } = await supabase
         .from('auctions')
         .select('*')
-      
       if (auctionsError) throw auctionsError
-      setAuctions(auctionsData || [])
+      setAuctions((auctionsData || []).map(normalizeAuction))
 
-      // Load attendance logs
       const { data: logsData, error: logsError } = await supabase
         .from('attendance_logs')
         .select('*')
-      
       if (logsError) throw logsError
       setAttendanceLogs(logsData || [])
 
-      // Check if user was logged in
       const savedUser = localStorage.getItem('currentUser')
       if (savedUser) {
         const user = JSON.parse(savedUser)
         const currentMembers = membersData || []
-        const found = currentMembers.find(m => m.id === user.id)
+        const found = currentMembers.find(m => Number(m.id) === Number(user.id))
         if (found) {
           setCurrentUser(found)
         } else {
@@ -82,25 +127,38 @@ function App() {
         }
       }
     } catch (error) {
-      console.error('❌ Failed to load data:', error)
+      console.error('Failed to load data:', error)
       addToast('Could not connect to database. Please check your connection.', 'red', 'Connection Error')
     } finally {
       setLoading(false)
     }
   }
 
-  // Save member to Supabase
+  useEffect(() => {
+    loadAllData()
+  }, [])
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const { data: membersData } = await supabase.from('members').select('*').order('id')
+      const { data: auctionsData } = await supabase.from('auctions').select('*')
+      const { data: logsData } = await supabase.from('attendance_logs').select('*')
+      if (membersData) setMembers(membersData.map(normalizeMember))
+      if (auctionsData) setAuctions(auctionsData.map(normalizeAuction))
+      if (logsData) setAttendanceLogs(logsData)
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [])
+
   const saveMember = async (member) => {
     try {
       const { data, error } = await supabase
         .from('members')
         .insert([member])
         .select()
-      
       if (error) throw error
       if (data && data.length > 0) {
-        const newMembers = [...members, data[0]]
-        setMembers(newMembers)
+        setMembers(prev => [...prev, normalizeMember(data[0])])
         return data[0]
       }
       return null
@@ -111,7 +169,6 @@ function App() {
     }
   }
 
-  // Update member in Supabase
   const updateMember = async (id, updates) => {
     try {
       const { data, error } = await supabase
@@ -119,10 +176,9 @@ function App() {
         .update(updates)
         .eq('id', id)
         .select()
-      
       if (error) throw error
       if (data && data.length > 0) {
-        setMembers(members.map(m => m.id === id ? data[0] : m))
+        setMembers(prev => prev.map(m => m.id === id ? normalizeMember(data[0]) : m))
         return data[0]
       }
       return null
@@ -133,16 +189,14 @@ function App() {
     }
   }
 
-  // Delete member from Supabase
   const deleteMember = async (id) => {
     try {
       const { error } = await supabase
         .from('members')
         .delete()
         .eq('id', id)
-      
       if (error) throw error
-      setMembers(members.filter(m => m.id !== id))
+      setMembers(prev => prev.filter(m => m.id !== id))
       return true
     } catch (error) {
       console.error('Failed to delete member:', error)
@@ -151,43 +205,11 @@ function App() {
     }
   }
 
-  useEffect(() => {
-    loadAllData()
-useEffect(() => {
-  const interval = setInterval(async () => {
-    const { data: membersData } = await supabase.from('members').select('*').order('id')
-    const { data: auctionsData } = await supabase.from('auctions').select('*')
-    if (membersData) setMembers(membersData)
-    if (auctionsData) setAuctions(auctionsData.map(a => ({
-      id: String(a.id),
-      name: a.name,
-      rarity: a.rarity,
-      status: a.status,
-      currentBid: Number(a.current_bid) || 0,
-      topBidder: a.top_bidder,
-      endsAt: Number(a.ends_at) || 0,
-      startedAt: Number(a.started_at) || 0,
-      startBid: Number(a.min_bid) || 0,
-      bids: typeof a.bids === 'string' ? JSON.parse(a.bids) : (a.bids || []),
-    })))
-  }, 5000) // every 5 seconds
-
-  return () => clearInterval(interval)
-}, [])
-  }, [])
-
-  const addToast = (msg, type = 'gold', title = '') => {
-    const id = Date.now()
-    setToasts(prev => [...prev, { id, msg, type, title }])
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
-  }
-
   const handleLogin = (username, password) => {
-    const user = members.find(m => 
-      m.username.toLowerCase() === username.toLowerCase() && 
+    const user = members.find(m =>
+      m.username && m.username.toLowerCase() === username.toLowerCase() &&
       m.password === password
     )
-    
     if (user) {
       setCurrentUser(user)
       localStorage.setItem('currentUser', JSON.stringify(user))

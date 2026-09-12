@@ -87,9 +87,44 @@ function minNextBidFor(auction) {
   return (auction?.currentBid || 0) + MIN_BID_INCREMENT
 }
 
+/**
+ * Small pill showing whether the item has been handed out yet.
+ * Visible to everyone — this is what tells a regular member that the
+ * "Distributed by" column exists and what state it's in.
+ */
+function DistributorStatusBadge({ name }) {
+  if (name) {
+    const isSystem = name === 'System'
+    return (
+      <span
+        className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+          isSystem
+            ? 'text-text-dim bg-void/60 border border-gold/15'
+            : 'text-green-400 bg-green-500/10 border border-green-500/40'
+        }`}
+        title={isSystem ? 'Ended automatically by the timer' : `Handed out by ${name}`}
+      >
+        <span aria-hidden="true">{isSystem ? '⏱' : '✓'}</span>
+        <span className="truncate max-w-[140px]">{name}</span>
+      </span>
+    )
+  }
+
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full text-yellow-400 bg-yellow-500/10 border border-yellow-500/40"
+      title="A Master or Elder needs to hand the item to the winner in-game, then mark it here."
+    >
+      <span aria-hidden="true">⏳</span>
+      <span>Awaiting hand-out</span>
+    </span>
+  )
+}
+
 export default function Auctions({ ctx }) {
   const { members, setMembers, auctions, setAuctions, currentUser, addToast, supabase } = ctx
   const [showCreate, setShowCreate] = useState(false)
+  const [showLegend, setShowLegend] = useState(false)
   const [newItem, setNewItem] = useState({
     name: '',
     description: '',
@@ -406,6 +441,11 @@ export default function Auctions({ ctx }) {
     [auctions]
   )
 
+  const pendingDistribution = useMemo(
+    () => endedAuctions.filter(a => a.topBidder && !a.distributedBy).length,
+    [endedAuctions]
+  )
+
   return (
     <div>
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
@@ -433,13 +473,54 @@ export default function Auctions({ ctx }) {
         </div>
       </div>
 
+      {/* ── Rules + "How it works" bar ─────────────────────────────── */}
       <div className="card mb-4 border-gold/20 bg-void/40">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-text-dim">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-text-dim">
           <span>🔒 Bids lock 5 minutes before the auction ends.</span>
           <span>📈 Minimum bid increment: +{MIN_BID_INCREMENT} coins.</span>
-          <span>🎁 Master / Admin assigns the distributor after it ends.</span>
+          <button
+            type="button"
+            onClick={() => setShowLegend(v => !v)}
+            aria-expanded={showLegend}
+            className="text-gold-light hover:text-gold-bright font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold/60 rounded"
+          >
+            {showLegend ? '▲ Hide help' : '? What does 🎁 Distributed by mean?'}
+          </button>
         </div>
+
+        {showLegend && (
+          <div className="mt-3 pt-3 border-t border-gold/10 text-xs text-text-dim space-y-1.5">
+            <p>
+              <span className="text-gold-light font-semibold">🎁 Distributed by</span> shows which
+              Master or Elder has handed the winning item to the winner in-game.
+            </p>
+            <p>
+              When an auction ends and someone has won, an admin selects the person who delivered
+              the item. Until then, the row shows{' '}
+              <span className="text-yellow-400 font-semibold">⏳ Awaiting hand-out</span>.
+            </p>
+            <p>
+              <span className="text-green-400 font-semibold">✓ Thomas Shelby</span> = already delivered.
+              {' '}
+              <span className="text-text-dim font-semibold">⏱ System</span> = ended automatically
+              by the timer (no human involved).
+            </p>
+          </div>
+        )}
       </div>
+
+      {/* ── Pending distribution nudge for elders ─────────────────── */}
+      {isElder && pendingDistribution > 0 && (
+        <div className="card mb-4 border-yellow-500/30 bg-yellow-500/[0.04]">
+          <div className="flex items-center gap-2 text-xs text-yellow-400">
+            <span aria-hidden="true">⚠️</span>
+            <span className="font-semibold">
+              {pendingDistribution} won {pendingDistribution === 1 ? 'item is' : 'items are'} still
+              waiting for a distributor. Pick who handed it out below.
+            </span>
+          </div>
+        </div>
+      )}
 
       {showCreate && (
         <div className="card mb-6 border-gold/40">
@@ -588,9 +669,12 @@ export default function Auctions({ ctx }) {
                 {endedAuctions.length}
               </span>
             </div>
+            <div className="text-[11px] text-text-dim hidden md:flex items-center gap-3">
+              <span><span className="text-yellow-400">⏳</span> awaiting hand-out</span>
+              <span><span className="text-green-400">✓</span> delivered</span>
+            </div>
           </div>
 
-          {/* Compact list — one row per ended auction. Scales to dozens without bloating. */}
           <div className="card p-0 overflow-hidden">
             <ul className="divide-y divide-gold/10">
               {endedAuctions.map(a => (
@@ -785,13 +869,9 @@ function AuctionCard({
 }
 
 /**
- * Compact ended-auction row.
- *
- * Collapsed (~56px tall) shows everything on one line:
- *   [rarity dot] Item name  ·  🏆 winner  ·  🎁 distributor  ·  💰 1,250  ·  3h ago  ·  ▼  🗑
- *
- * On narrow screens, wraps to a stacked layout.
- * Expanded shows the bid history below.
+ * Ended-auction row with an explicit "Distributed by" column that anyone
+ * can read. Elders/Admins get an inline dropdown; everyone else sees a
+ * status badge explaining the hand-out state.
  */
 function EndedAuctionRow({
   auction: a, now, currentUser, isElder, distributors,
@@ -846,7 +926,7 @@ function EndedAuctionRow({
           </span>
         </div>
 
-        {/* Distributor (compact) */}
+        {/* Distributor status / picker (desktop) */}
         {winner && (
           <div className="hidden lg:flex items-center gap-1.5 flex-shrink-0 min-w-0" title="Distributed by">
             <span className="text-sm" aria-hidden="true">🎁</span>
@@ -863,9 +943,7 @@ function EndedAuctionRow({
                 ))}
               </select>
             ) : (
-              <span className={`text-xs truncate max-w-[120px] ${assignedName ? 'text-text-bright' : 'italic text-text-dim'}`}>
-                {assignedName || 'Not yet'}
-              </span>
+              <DistributorStatusBadge name={assignedName} />
             )}
           </div>
         )}
@@ -912,8 +990,8 @@ function EndedAuctionRow({
         </div>
       </div>
 
-      {/* ── Mobile-only summary row (when md/lg columns are hidden) ── */}
-      <div className="md:hidden flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-3 text-xs">
+      {/* ── Mobile-only summary row ── */}
+      <div className="md:hidden flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs">
         {winner && (
           <span className="flex items-center gap-1">
             <span aria-hidden="true">🏆</span>
@@ -933,7 +1011,7 @@ function EndedAuctionRow({
       {winner && (
         <div className="lg:hidden flex items-center gap-2 px-4 pb-3 text-xs">
           <span aria-hidden="true">🎁</span>
-          <span className="text-text-dim">Distributed by</span>
+          <span className="text-text-dim flex-shrink-0">Distributed by</span>
           {isElder ? (
             <select
               className="input text-[11px] py-0.5 px-2 h-7 flex-1 min-w-0"
@@ -947,9 +1025,7 @@ function EndedAuctionRow({
               ))}
             </select>
           ) : (
-            <span className={`truncate ${assignedName ? 'text-text-bright font-semibold' : 'italic text-text-dim'}`}>
-              {assignedName || 'Not yet distributed'}
-            </span>
+            <DistributorStatusBadge name={assignedName} />
           )}
         </div>
       )}

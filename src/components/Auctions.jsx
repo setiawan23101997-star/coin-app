@@ -88,7 +88,19 @@ export default function Auctions({ ctx }) {
       return
     }
 
-    const newBids = [...(auction.bids || []), { bidder: currentUser.name, amount, time: Date.now() }]
+    const prevBidder = auction.topBidder
+    const prevAmount = auction.currentBid
+
+    const newBids = [
+      ...(auction.bids || []),
+      {
+        bidder: currentUser.name,
+        amount,
+        time: Date.now(),
+        previousBidder: prevBidder || null,
+        previousAmount: prevBidder ? prevAmount : null,
+      },
+    ]
 
     const { error: auctionErr } = await supabase
       .from('auctions')
@@ -106,19 +118,19 @@ export default function Auctions({ ctx }) {
       .update({ coins: bidder.coins - amount })
       .eq('id', bidder.id)
 
-    if (auction.topBidder) {
-      const prev = members.find(m => m.name === auction.topBidder)
+    if (prevBidder) {
+      const prev = members.find(m => m.name === prevBidder)
       if (prev) {
         await supabase
           .from('members')
-          .update({ coins: prev.coins + auction.currentBid })
+          .update({ coins: prev.coins + prevAmount })
           .eq('id', prev.id)
       }
     }
 
     setMembers(prev => prev.map(m => {
       if (m.id === bidder.id) return { ...m, coins: m.coins - amount }
-      if (auction.topBidder && m.name === auction.topBidder) return { ...m, coins: m.coins + auction.currentBid }
+      if (prevBidder && m.name === prevBidder) return { ...m, coins: m.coins + prevAmount }
       return m
     }))
 
@@ -167,6 +179,11 @@ export default function Auctions({ ctx }) {
     const m = Math.floor((diff % 3600000) / 60000)
     const s = Math.floor((diff % 60000) / 1000)
     return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`
+  }
+
+  const formatBidTime = (ts) => {
+    const d = new Date(ts)
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
   const activeAuctions = auctions.filter(a => a.status === 'active')
@@ -292,6 +309,11 @@ export default function Auctions({ ctx }) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
           {activeAuctions.map(auction => {
             const isWinning = auction.topBidder === currentUser?.name
+            const bids = auction.bids || []
+
+            // Build the bid history: newest bid first, each with the previous top bidder info
+            const history = [...bids].reverse()
+
             return (
               <div key={auction.id} className={`card ${isWinning ? 'border-green-500/40 bg-green-500/5' : ''}`}>
                 <div className="flex items-start justify-between">
@@ -337,6 +359,59 @@ export default function Auctions({ ctx }) {
                   </div>
                 )}
 
+                {/* ── Bid History ── */}
+                {history.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gold/10">
+                    <div className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-2">
+                      Bid History ({history.length})
+                    </div>
+                    <div className="space-y-1 max-h-[180px] overflow-y-auto pr-1">
+                      {history.map((b, idx) => {
+                        const isCurrentTop = idx === 0
+                        const wasOutbid = !isCurrentTop
+                        return (
+                          <div
+                            key={b.time || idx}
+                            className={`text-xs rounded px-2 py-1.5 ${
+                              isCurrentTop
+                                ? 'bg-green-500/10 border border-green-500/30'
+                                : 'bg-void/40 border border-gold/10'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span
+                                className={`font-semibold truncate ${
+                                  isCurrentTop ? 'text-green-300' : 'text-text-dim line-through'
+                                }`}
+                              >
+                                {b.bidder}
+                              </span>
+                              <span
+                                className={`font-bold flex-shrink-0 ${
+                                  isCurrentTop ? 'text-green-300' : 'text-text-dim line-through'
+                                }`}
+                              >
+                                {b.amount.toLocaleString()}
+                              </span>
+                            </div>
+                            {wasOutbid && (
+                              <div className="text-[10px] text-text-dim mt-0.5">
+                                outbid · {formatBidTime(b.time)}
+                              </div>
+                            )}
+                            {isCurrentTop && (
+                              <div className="text-[10px] text-green-400 mt-0.5">
+                                {auction.topBidder === currentUser?.name ? 'winning · ' : 'leading · '}
+                                {formatBidTime(b.time)}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {isMaster && (
                   <button
                     onClick={() => endAuction(auction.id)}
@@ -355,18 +430,28 @@ export default function Auctions({ ctx }) {
         <div className="card">
           <div className="text-sm font-bold text-text-dim uppercase tracking-wider mb-3">Ended Auctions</div>
           <div className="space-y-2 max-h-[300px] overflow-y-auto">
-            {endedAuctions.slice(0, 10).map(a => (
-              <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-2 border-b border-gold/10">
-                <div>
-                  <span className="font-semibold">{a.name}</span>
-                  <span className={`badge badge-${a.rarity} ml-2`}>{a.rarity}</span>
+            {endedAuctions.slice(0, 10).map(a => {
+              const lastBid = (a.bids || [])[(a.bids || []).length - 1]
+              return (
+                <div key={a.id} className="py-2 border-b border-gold/10">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-semibold">{a.name}</span>
+                      <span className={`badge badge-${a.rarity} ml-2`}>{a.rarity}</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <span className="text-sm text-gold-light">{a.currentBid.toLocaleString()} coins</span>
+                      <span className="text-sm text-text">{a.topBidder || 'No winner'}</span>
+                    </div>
+                  </div>
+                  {a.bids && a.bids.length > 1 && (
+                    <div className="text-[10px] text-text-dim mt-1">
+                      {a.bids.length} bids · previous: {lastBid?.previousBidder || '—'} at {(lastBid?.previousAmount || 0).toLocaleString()}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-4">
-                  <span className="text-sm text-gold-light">{a.currentBid.toLocaleString()} coins</span>
-                  <span className="text-sm text-text">{a.topBidder || 'No winner'}</span>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}

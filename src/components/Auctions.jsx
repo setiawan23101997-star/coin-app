@@ -11,6 +11,7 @@ export default function Auctions({ ctx }) {
     duration: 60,
   })
   const [bidAmounts, setBidAmounts] = useState({})
+  const [expandedEnded, setExpandedEnded] = useState({})
 
   const isElder = currentUser?.role === 'Elder' || currentUser?.role === 'Master'
   const isMaster = currentUser?.role === 'Master'
@@ -186,8 +187,13 @@ export default function Auctions({ ctx }) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
+  const toggleEndedExpanded = (id) => {
+    setExpandedEnded(prev => ({ ...prev, [id]: !prev[id] }))
+  }
+
   const activeAuctions = auctions.filter(a => a.status === 'active')
-  const endedAuctions = auctions.filter(a => a.status === 'ended')
+  const endedAuctions = [...auctions.filter(a => a.status === 'ended')]
+    .sort((a, b) => (b.endsAt || 0) - (a.endsAt || 0))
 
   return (
     <div>
@@ -291,9 +297,7 @@ export default function Auctions({ ctx }) {
           </div>
 
           <div className="flex flex-wrap gap-2 items-center">
-            <button onClick={createAuction} className="btn-gold">
-              Start Auction
-            </button>
+            <button onClick={createAuction} className="btn-gold">Start Auction</button>
             <span className="text-xs text-text-dim">
               {parseInt(newItem.duration) > 0
                 ? `Ends ${new Date(Date.now() + (parseInt(newItem.duration) || 60) * 60000).toLocaleTimeString()}`
@@ -310,8 +314,6 @@ export default function Auctions({ ctx }) {
           {activeAuctions.map(auction => {
             const isWinning = auction.topBidder === currentUser?.name
             const bids = auction.bids || []
-
-            // Build the bid history: newest bid first, each with the previous top bidder info
             const history = [...bids].reverse()
 
             return (
@@ -359,7 +361,6 @@ export default function Auctions({ ctx }) {
                   </div>
                 )}
 
-                {/* ── Bid History ── */}
                 {history.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-gold/10">
                     <div className="text-[10px] font-bold text-text-dim uppercase tracking-wider mb-2">
@@ -368,7 +369,6 @@ export default function Auctions({ ctx }) {
                     <div className="space-y-1 max-h-[180px] overflow-y-auto pr-1">
                       {history.map((b, idx) => {
                         const isCurrentTop = idx === 0
-                        const wasOutbid = !isCurrentTop
                         return (
                           <div
                             key={b.time || idx}
@@ -379,32 +379,18 @@ export default function Auctions({ ctx }) {
                             }`}
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <span
-                                className={`font-semibold truncate ${
-                                  isCurrentTop ? 'text-green-300' : 'text-text-dim line-through'
-                                }`}
-                              >
+                              <span className={`font-semibold truncate ${isCurrentTop ? 'text-green-300' : 'text-text-dim line-through'}`}>
                                 {b.bidder}
                               </span>
-                              <span
-                                className={`font-bold flex-shrink-0 ${
-                                  isCurrentTop ? 'text-green-300' : 'text-text-dim line-through'
-                                }`}
-                              >
+                              <span className={`font-bold flex-shrink-0 ${isCurrentTop ? 'text-green-300' : 'text-text-dim line-through'}`}>
                                 {b.amount.toLocaleString()}
                               </span>
                             </div>
-                            {wasOutbid && (
-                              <div className="text-[10px] text-text-dim mt-0.5">
-                                outbid · {formatBidTime(b.time)}
-                              </div>
-                            )}
-                            {isCurrentTop && (
-                              <div className="text-[10px] text-green-400 mt-0.5">
-                                {auction.topBidder === currentUser?.name ? 'winning · ' : 'leading · '}
-                                {formatBidTime(b.time)}
-                              </div>
-                            )}
+                            <div className={`text-[10px] mt-0.5 ${isCurrentTop ? 'text-green-400' : 'text-text-dim'}`}>
+                              {isCurrentTop
+                                ? (auction.topBidder === currentUser?.name ? 'winning' : 'leading')
+                                : 'outbid'} · {formatBidTime(b.time)}
+                            </div>
                           </div>
                         )
                       })}
@@ -428,25 +414,102 @@ export default function Auctions({ ctx }) {
 
       {endedAuctions.length > 0 && (
         <div className="card">
-          <div className="text-sm font-bold text-text-dim uppercase tracking-wider mb-3">Ended Auctions</div>
-          <div className="space-y-2 max-h-[300px] overflow-y-auto">
-            {endedAuctions.slice(0, 10).map(a => {
-              const lastBid = (a.bids || [])[(a.bids || []).length - 1]
+          <div className="text-sm font-bold text-text-dim uppercase tracking-wider mb-3">
+            Ended Auctions ({endedAuctions.length})
+          </div>
+          <div className="space-y-3 max-h-[600px] overflow-y-auto">
+            {endedAuctions.map(a => {
+              const bids = a.bids || []
+              const winner = a.topBidder
+              const winningBid = a.currentBid
+              const totalBids = bids.length
+              const isExpanded = !!expandedEnded[a.id]
+
               return (
-                <div key={a.id} className="py-2 border-b border-gold/10">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="font-semibold">{a.name}</span>
-                      <span className={`badge badge-${a.rarity} ml-2`}>{a.rarity}</span>
+                <div key={a.id} className="rounded border border-gold/15 bg-void/40 p-3">
+                  {/* Header row: name + rarity + winner summary */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-gold-light">{a.name}</span>
+                        <span className={`badge badge-${a.rarity}`}>{a.rarity}</span>
+                      </div>
+                      {a.description && (
+                        <div className="text-xs text-text-dim italic mt-0.5">{a.description}</div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-sm text-gold-light">{a.currentBid.toLocaleString()} coins</span>
-                      <span className="text-sm text-text">{a.topBidder || 'No winner'}</span>
+
+                    <div className="text-right">
+                      {winner ? (
+                        <>
+                          <div className="text-[10px] uppercase tracking-wider text-text-dim font-bold">
+                            🏆 Winner
+                          </div>
+                          <div className="text-gold-bright font-bold">{winner}</div>
+                          <div className="text-xs text-green-400 font-semibold">
+                            spent {winningBid.toLocaleString()} coins
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-xs text-text-dim italic">No winner · no bids placed</div>
+                      )}
                     </div>
                   </div>
-                  {a.bids && a.bids.length > 1 && (
-                    <div className="text-[10px] text-text-dim mt-1">
-                      {a.bids.length} bids · previous: {lastBid?.previousBidder || '—'} at {(lastBid?.previousAmount || 0).toLocaleString()}
+
+                  {/* Meta row: bids count + toggle */}
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-gold/10">
+                    <div className="text-[10px] text-text-dim">
+                      {totalBids} {totalBids === 1 ? 'bid' : 'bids'}
+                      {a.endsAt ? ` · ended ${new Date(a.endsAt).toLocaleString()}` : ''}
+                    </div>
+                    {totalBids > 0 && (
+                      <button
+                        onClick={() => toggleEndedExpanded(a.id)}
+                        className="text-[10px] uppercase tracking-wider text-gold-light hover:text-gold-bright"
+                      >
+                        {isExpanded ? '▲ Hide bids' : '▼ Show all bids'}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Expandable full bid chain */}
+                  {isExpanded && totalBids > 0 && (
+                    <div className="mt-2 pt-2 border-t border-gold/10 space-y-1">
+                      {bids.map((b, idx) => {
+                        const isLast = idx === bids.length - 1
+                        return (
+                          <div
+                            key={b.time || idx}
+                            className={`flex items-center justify-between gap-2 text-xs rounded px-2 py-1.5 ${
+                              isLast
+                                ? 'bg-green-500/10 border border-green-500/30'
+                                : 'bg-void/40 border border-gold/10'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className={`text-[10px] font-bold ${isLast ? 'text-green-400' : 'text-text-dim'}`}>
+                                #{idx + 1}
+                              </span>
+                              <span className={`font-semibold truncate ${isLast ? 'text-green-300' : 'text-text-dim'}`}>
+                                {b.bidder}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 flex-shrink-0">
+                              <span className={`font-bold ${isLast ? 'text-green-300' : 'text-text-dim'}`}>
+                                {b.amount.toLocaleString()}
+                              </span>
+                              <span className="text-[10px] text-text-dim">
+                                {formatBidTime(b.time)}
+                              </span>
+                              {isLast && (
+                                <span className="text-[10px] text-green-400 font-bold uppercase tracking-wider">
+                                  won
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>

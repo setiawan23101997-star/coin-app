@@ -11,6 +11,7 @@ const eventTypes = [
 export default function Attendance({ ctx }) {
   const { members, setMembers, attendanceLogs, setAttendanceLogs, currentUser, addToast, supabase } = ctx
   const [selectedEvent, setSelectedEvent] = useState(eventTypes[0])
+  const [coinAmount, setCoinAmount] = useState(25)
   const [selectedMembers, setSelectedMembers] = useState({})
   const [search, setSearch] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -29,12 +30,17 @@ export default function Attendance({ ctx }) {
       return
     }
 
+    const coinValue = parseInt(coinAmount)
+    if (!Number.isFinite(coinValue) || coinValue < 0) {
+      addToast('Enter a valid coin amount.', 'red', 'Error')
+      return
+    }
+
     setSubmitting(true)
 
     const now = new Date()
     const dateStr = now.toLocaleDateString()
     const ts = now.getTime()
-    const coinValue = 25
 
     const targets = members.filter(m => ids.includes(String(m.id)))
 
@@ -90,7 +96,6 @@ export default function Attendance({ ctx }) {
       addToast('Coins saved, but the attendance log failed to save.', 'red', 'Partial Save')
     }
 
-    // Update local state
     setMembers(prev => prev.map(m => {
       if (!ids.includes(String(m.id))) return m
       const attendEntry = { event: selectedEvent, date: dateStr, ts, qualifier: 'full', coins: coinValue }
@@ -105,7 +110,7 @@ export default function Attendance({ ctx }) {
 
     setSelectedMembers({})
     setSubmitting(false)
-    addToast(`${ids.length} members recorded for ${selectedEvent}.`, 'gold', 'Attendance Saved')
+    addToast(`${ids.length} members recorded for ${selectedEvent} (+${coinValue} coins each).`, 'gold', 'Attendance Saved')
   }
 
   return (
@@ -129,7 +134,42 @@ export default function Attendance({ ctx }) {
             >
               {eventTypes.map(e => <option key={e}>{e}</option>)}
             </select>
-            <div className="text-xs text-text-dim mt-2">+25 coins per attendee</div>
+
+            <div className="text-sm font-bold text-text-dim uppercase tracking-wider mb-3 mt-5">
+              Coins per Member
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                className="input flex-1"
+                type="number"
+                min="0"
+                step="1"
+                value={coinAmount}
+                onChange={e => setCoinAmount(e.target.value)}
+                placeholder="25"
+              />
+              <span className="text-xs text-text-dim">coins</span>
+            </div>
+            <div className="flex flex-wrap gap-1 mt-2">
+              {[10, 25, 50, 100, 200].map(v => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setCoinAmount(v)}
+                  className={`text-xs px-2 py-1 rounded border transition-colors ${
+                    Number(coinAmount) === v
+                      ? 'bg-gold/20 border-gold text-gold-bright'
+                      : 'border-gold/20 text-text-dim hover:text-gold-light hover:border-gold/40'
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs text-text-dim mt-3">
+              Each selected member will receive <span className="text-gold-light font-bold">{coinAmount || 0}</span> coins.
+            </div>
           </div>
 
           <div className="card md:col-span-2">

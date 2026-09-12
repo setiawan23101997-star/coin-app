@@ -14,15 +14,18 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 
 function App() {
   const [page, setPage] = useState('dashboard')
+
+  // `allMembers` — the full roster, including Admins. Used for authentication.
+  // `members`    — the filtered view shown to the current user.
+  const [allMembers, setAllMembers] = useState([])
   const [members, setMembers] = useState([])
+
   const [auctions, setAuctions] = useState([])
   const [attendanceLogs, setAttendanceLogs] = useState([])
   const [currentUser, setCurrentUser] = useState(null)
   const [toasts, setToasts] = useState([])
   const [loading, setLoading] = useState(true)
 
-  // Tracks which auction IDs this browser instance has already auto-ended,
-  // so two tabs (or the 5s poll racing the auto-end tick) don't double-fire.
   const autoEndedRef = useRef(new Set())
 
   const addToast = (msg, type = 'gold', title = '') => {
@@ -31,15 +34,6 @@ function App() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
   }
 
-  /**
-   * Normalize a Supabase auction row into the client-side shape.
-   *
-   * `distributed_by` and `ended_at` are both optional columns — if they don't
-   * exist in your DB yet, the fields resolve to null / 0 and everything else
-   * still works. Add them with:
-   *   alter table auctions add column if not exists distributed_by text;
-   *   alter table auctions add column if not exists ended_at bigint;
-   */
   const normalizeAuction = (a) => ({
     id: String(a.id),
     name: a.name ?? '',
@@ -92,6 +86,13 @@ function App() {
     })(),
   })
 
+  /**
+   * Filter what a given viewer is allowed to SEE.
+   * Admins are hidden from everyone except other Admins.
+   *
+   * IMPORTANT: this filter is applied to the DISPLAYED roster only. Auth
+   * always runs against the full list (`allMembers`).
+   */
   const filterVisibleMembers = (list, viewer) => {
     if (viewer?.role === 'Admin') return list
     return list.filter(m => m.role !== 'Admin')
@@ -124,9 +125,12 @@ function App() {
         for (const m of defaultMembers) {
           await supabase.from('members').insert([m])
         }
-        setMembers(defaultMembers)
+        const normalized = defaultMembers.map(normalizeMember)
+        setAllMembers(normalized)
+        setMembers(filterVisibleMembers(normalized, persistedViewer))
       } else {
         const normalized = membersData.map(normalizeMember)
+        setAllMembers(normalized)
         setMembers(filterVisibleMembers(normalized, persistedViewer))
       }
 
@@ -173,6 +177,7 @@ function App() {
       const { data: logsData } = await supabase.from('attendance_logs').select('*')
       if (membersData) {
         const normalized = membersData.map(normalizeMember)
+        setAllMembers(normalized)
         setMembers(filterVisibleMembers(normalized, currentUser))
       }
       if (auctionsData) setAuctions(auctionsData.map(normalizeAuction))
@@ -181,28 +186,9 @@ function App() {
     return () => clearInterval(interval)
   }, [currentUser])
 
-  /**
-   * Auto-end expired auctions.
-   *
-   * Runs every 5s. Any auction where status === 'active' and endsAt has passed
-   * gets committed as 'ended' — winner = current top bidder, final price =
-   * current bid. Persists to Supabase, then patches local state so the
-   * Dashboard's "Recently won" strip picks it up immediately.
-   *
-   * Also stamps `ended_at` and `distributed_by: 'System'` so ended-by-timer
-   * auctions show a proper timestamp and a "System" distributor on the
-   * Auctions page. If those columns don't exist yet, remove the corresponding
-   * keys from the update object below — Supabase will throw "column not found".
-   *
-   * This is best-effort client-side resolution. If nobody has the tab open
-   * when an auction expires, the next person who loads the app (or the 5s
-   * poll) will trigger this and it'll resolve then. For bulletproof behavior,
-   * pair this with a server-side cron or a lazy-on-read UPDATE on your backend.
-   */
   useEffect(() => {
     const autoEndExpired = async () => {
       const now = Date.now()
-
       const expired = auctions.filter(a =>
         a.status === 'active' &&
         a.endsAt > 0 &&
@@ -213,16 +199,11 @@ function App() {
       if (expired.length === 0) return
 
       for (const a of expired) {
-        // Mark locally first so the next tick can't try to end it again,
-        // even if the Supabase write is slow.
         autoEndedRef.current.add(a.id)
 
         const winner = a.topBidder || null
         const finalBid = a.currentBid ?? 0
-        const endedAt = a.endsAt // use the scheduled end, not "now"
-
-        // Only mark as 'System' if there was actually a winner to distribute.
-        // If nobody bid, there's nothing to distribute — leave it null.
+        const endedAt = a.endsAt
         const distributedBy = winner ? 'System' : null
 
         const { error } = await supabase
@@ -236,7 +217,6 @@ function App() {
 
         if (error) {
           console.error(`Auto-end failed for auction ${a.id}:`, error)
-          // Roll back the local guard so we can retry next tick.
           autoEndedRef.current.delete(a.id)
           continue
         }
@@ -263,7 +243,6 @@ function App() {
       }
     }
 
-    // Run immediately on mount / when auctions list changes, then on a 5s tick.
     autoEndExpired()
     const id = setInterval(autoEndExpired, 5000)
     return () => clearInterval(id)
@@ -277,7 +256,9 @@ function App() {
         .select()
       if (error) throw error
       if (data && data.length > 0) {
-        setMembers(prev => [...prev, normalizeMember(data[0])])
+        const normalized = normalizeMember(data[0])
+        setAllMembers(prev => [...prev, normalized])
+        setMembers(prev => [...prev, normalized])
         return data[0]
       }
       return null
@@ -297,7 +278,9 @@ function App() {
         .select()
       if (error) throw error
       if (data && data.length > 0) {
-        setMembers(prev => prev.map(m => m.id === id ? normalizeMember(data[0]) : m))
+        const normalized = normalizeMember(data[0])
+        setAllMembers(prev => prev.map(m => m.id === id ? normalized : m))
+        setMembers(prev => prev.map(m => m.id === id ? normalized : m))
         return data[0]
       }
       return null
@@ -315,6 +298,7 @@ function App() {
         .delete()
         .eq('id', id)
       if (error) throw error
+      setAllMembers(prev => prev.filter(m => m.id !== id))
       setMembers(prev => prev.filter(m => m.id !== id))
       return true
     } catch (error) {
@@ -328,18 +312,27 @@ function App() {
     const { data } = await supabase.from('members').select('*').order('id')
     if (data) {
       const normalized = data.map(normalizeMember)
+      setAllMembers(normalized)
       setMembers(filterVisibleMembers(normalized, currentUser))
     }
   }
 
+  /**
+   * Login — authenticates against the FULL member list (allMembers), not
+   * the filtered view. This is the fix: on a fresh browser/device with no
+   * prior session, `members` has no Admin rows because the filter hides
+   * them from unauthenticated viewers. `allMembers` always has everyone.
+   */
   const handleLogin = (username, password) => {
-    const user = members.find(m =>
+    const user = allMembers.find(m =>
       m.username && m.username.toLowerCase() === username.toLowerCase() &&
       m.password === password
     )
     if (user) {
       setCurrentUser(user)
       localStorage.setItem('currentUser', JSON.stringify(user))
+      // Re-apply the visibility filter for this viewer.
+      setMembers(filterVisibleMembers(allMembers, user))
       addToast(`Welcome back, ${user.name}!`, 'gold', 'Login Success')
       return true
     } else {
@@ -351,12 +344,14 @@ function App() {
   const handleLogout = () => {
     setCurrentUser(null)
     localStorage.removeItem('currentUser')
+    setMembers(filterVisibleMembers(allMembers, null))
     addToast('Logged out successfully.', 'blue', 'Goodbye')
   }
 
   const ctx = {
     members,
     setMembers,
+    allMembers,
     saveMember,
     updateMember,
     deleteMember,

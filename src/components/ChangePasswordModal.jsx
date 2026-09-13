@@ -11,26 +11,20 @@ export default function ChangePasswordModal({ ctx, onClose }) {
   const handleSubmit = async () => {
     setError('')
 
-    if (!current) {
-      setError('Enter your current password.')
-      return
-    }
-    if (!next) {
-      setError('Enter a new password.')
-      return
-    }
-    if (next.length < 4) {
-      setError('New password must be at least 4 characters.')
-      return
-    }
-    if (next !== confirm) {
-      setError('New passwords do not match.')
-      return
-    }
-    if (next === current) {
-      setError('New password must be different from the current one.')
-      return
-    }
+    if (!current) { setError('Enter your current password.'); return }
+    if (!next)    { setError('Enter a new password.'); return }
+    if (next.length < 4) { setError('New password must be at least 4 characters.'); return }
+    if (next !== confirm) { setError('New passwords do not match.'); return }
+    if (next === current) { setError('New password must be different from the current one.'); return }
+
+    // Debug: what are we actually sending?
+    console.log('[ChangePassword] sending:', {
+      memberId: currentUser?.id,
+      currentLen: current.length,
+      currentHasLeadingSpace: current.startsWith(' '),
+      currentHasTrailingSpace: current.endsWith(' '),
+      nextLen: next.length,
+    })
 
     setSubmitting(true)
     try {
@@ -65,10 +59,7 @@ export default function ChangePasswordModal({ ctx, onClose }) {
 
         <div className="modal-body space-y-4">
           {error && (
-            <div
-              role="alert"
-              className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm"
-            >
+            <div role="alert" className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm">
               ❌ {error}
             </div>
           )}
@@ -85,7 +76,8 @@ export default function ChangePasswordModal({ ctx, onClose }) {
               onChange={e => setCurrent(e.target.value)}
               disabled={submitting}
               autoFocus
-              autoComplete="current-password"
+              autoComplete="off"
+              name="current-password-off"
             />
           </div>
 

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 
 export default function ResetPasswordModal({ ctx, member, onClose }) {
-  const { resetMemberPassword, currentUser } = ctx
+  const { resetMemberPassword } = ctx
   const [newPassword, setNewPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
@@ -10,18 +10,9 @@ export default function ResetPasswordModal({ ctx, member, onClose }) {
   const handleSubmit = async () => {
     setError('')
 
-    if (!newPassword) {
-      setError('Enter a new password.')
-      return
-    }
-    if (newPassword.length < 4) {
-      setError('Password must be at least 4 characters.')
-      return
-    }
-    if (newPassword !== confirm) {
-      setError('Passwords do not match.')
-      return
-    }
+    if (!newPassword) { setError('Enter a new password.'); return }
+    if (newPassword.length < 4) { setError('Password must be at least 4 characters.'); return }
+    if (newPassword !== confirm) { setError('Passwords do not match.'); return }
 
     setSubmitting(true)
     try {
@@ -62,10 +53,7 @@ export default function ResetPasswordModal({ ctx, member, onClose }) {
           </div>
 
           {error && (
-            <div
-              role="alert"
-              className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm"
-            >
+            <div role="alert" className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm">
               ❌ {error}
             </div>
           )}

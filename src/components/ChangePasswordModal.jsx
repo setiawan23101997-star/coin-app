@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 
 export default function ChangePasswordModal({ ctx, onClose }) {
-  const { changeOwnPassword, currentUser } = ctx
+  const { changeOwnPassword } = ctx
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -17,22 +17,13 @@ export default function ChangePasswordModal({ ctx, onClose }) {
     if (next !== confirm) { setError('New passwords do not match.'); return }
     if (next === current) { setError('New password must be different from the current one.'); return }
 
-    // Debug: what are we actually sending?
-    console.log('[ChangePassword] sending:', {
-      memberId: currentUser?.id,
-      currentLen: current.length,
-      currentHasLeadingSpace: current.startsWith(' '),
-      currentHasTrailingSpace: current.endsWith(' '),
-      nextLen: next.length,
-    })
-
     setSubmitting(true)
     try {
       const ok = await changeOwnPassword(current, next)
       if (ok) {
         onClose()
       } else {
-        setError('Could not change the password. Please try again.')
+        setError('Current password is incorrect.')
       }
     } catch (err) {
       console.error('Change password failed:', err)
@@ -76,8 +67,6 @@ export default function ChangePasswordModal({ ctx, onClose }) {
               onChange={e => setCurrent(e.target.value)}
               disabled={submitting}
               autoFocus
-              autoComplete="off"
-              name="current-password-off"
             />
           </div>
 
@@ -92,7 +81,6 @@ export default function ChangePasswordModal({ ctx, onClose }) {
               value={next}
               onChange={e => setNext(e.target.value)}
               disabled={submitting}
-              autoComplete="new-password"
             />
           </div>
 
@@ -108,7 +96,6 @@ export default function ChangePasswordModal({ ctx, onClose }) {
               onChange={e => setConfirm(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
               disabled={submitting}
-              autoComplete="new-password"
             />
           </div>
         </div>

@@ -4,9 +4,9 @@ export default function Login({ ctx }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
 
     if (!username || !password) {
@@ -14,14 +14,22 @@ export default function Login({ ctx }) {
       return
     }
 
-    setIsLoading(true)
+    setSubmitting(true)
     setError('')
 
-    const success = ctx.handleLogin(username, password)
-    setIsLoading(false)
-
-    if (!success) {
-      setError('Invalid username or password.')
+    try {
+      const ok = await ctx.handleLogin(username, password)
+      if (!ok) {
+        // ctx.handleLogin already shows a toast; also show inline
+        setError('Invalid username or password.')
+      }
+      // On success, App re-renders and swaps to the main layout,
+      // so no navigation needed here.
+    } catch (err) {
+      console.error('Login failed:', err)
+      setError(err.message || 'Something went wrong. Please try again.')
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -35,50 +43,55 @@ export default function Login({ ctx }) {
         </div>
 
         <div className="card border-gold/40 p-6">
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={handleSubmit} noValidate>
             {error && (
-              <div className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm mb-4">
+              <div
+                role="alert"
+                className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm mb-4"
+              >
                 ❌ {error}
               </div>
             )}
 
             <div className="mb-4">
-              <label className="block text-text-dim text-xs uppercase tracking-wider font-bold mb-2">
+              <label htmlFor="login-username" className="block text-text-dim text-xs uppercase tracking-wider font-bold mb-2">
                 Username
               </label>
               <input
+                id="login-username"
                 type="text"
                 className="input"
                 placeholder="Enter your username..."
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                disabled={isLoading}
+                onChange={e => setUsername(e.target.value)}
+                disabled={submitting}
                 autoFocus
                 autoComplete="username"
               />
             </div>
 
             <div className="mb-6">
-              <label className="block text-text-dim text-xs uppercase tracking-wider font-bold mb-2">
+              <label htmlFor="login-password" className="block text-text-dim text-xs uppercase tracking-wider font-bold mb-2">
                 Password
               </label>
               <input
+                id="login-password"
                 type="password"
                 className="input"
                 placeholder="Enter your password..."
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={isLoading}
+                onChange={e => setPassword(e.target.value)}
+                disabled={submitting}
                 autoComplete="current-password"
               />
             </div>
 
             <button
               type="submit"
-              className="btn-gold w-full py-3 text-base"
-              disabled={isLoading}
+              className="btn-gold w-full py-3 text-base disabled:opacity-50"
+              disabled={submitting}
             >
-              {isLoading ? '⏳ Logging in...' : '🔐 Login'}
+              {submitting ? '⏳ Logging in…' : '🔐 Login'}
             </button>
           </form>
         </div>

@@ -1,47 +1,50 @@
 import React, { useState } from 'react'
 
 export default function ChangePasswordModal({ ctx, onClose }) {
-  const { currentUser, addToast, supabase } = ctx
-  const [currentPassword, setCurrentPassword] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
+  const { changeOwnPassword, currentUser } = ctx
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
-  const submit = async () => {
+  const handleSubmit = async () => {
     setError('')
 
-    if (!currentPassword) { setError('Enter your current password.'); return }
-    if (!newPassword) { setError('Enter a new password.'); return }
-    if (newPassword.length < 4) { setError('New password must be at least 4 characters.'); return }
-    if (newPassword !== confirmPassword) { setError('New passwords do not match.'); return }
-    if (newPassword === currentPassword) { setError('New password must be different from the current one.'); return }
-
-    if (currentUser.password !== currentPassword) {
-      setError('Current password is incorrect.')
+    if (!current) {
+      setError('Enter your current password.')
+      return
+    }
+    if (!next) {
+      setError('Enter a new password.')
+      return
+    }
+    if (next.length < 4) {
+      setError('New password must be at least 4 characters.')
+      return
+    }
+    if (next !== confirm) {
+      setError('New passwords do not match.')
+      return
+    }
+    if (next === current) {
+      setError('New password must be different from the current one.')
       return
     }
 
-    setSaving(true)
+    setSubmitting(true)
     try {
-      const { error: updErr } = await supabase
-        .from('members')
-        .update({ password: newPassword })
-        .eq('id', currentUser.id)
-
-      if (updErr) throw updErr
-
-      const updated = { ...currentUser, password: newPassword }
-      ctx.setCurrentUser(updated)
-      try { localStorage.setItem('currentUser', JSON.stringify(updated)) } catch {}
-
-      addToast('Your password has been updated.', 'gold', 'Password Changed')
-      onClose()
-    } catch (e) {
-      console.error('Password change failed:', e)
-      setError('Could not save the new password. Please try again.')
+      const ok = await changeOwnPassword(current, next)
+      if (ok) {
+        onClose()
+      } else {
+        setError('Could not change the password. Please try again.')
+      }
+    } catch (err) {
+      console.error('Change password failed:', err)
+      setError(err.message || 'Could not change the password. Please try again.')
     } finally {
-      setSaving(false)
+      setSubmitting(false)
     }
   }
 
@@ -62,7 +65,10 @@ export default function ChangePasswordModal({ ctx, onClose }) {
 
         <div className="modal-body space-y-4">
           {error && (
-            <div className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm">
+            <div
+              role="alert"
+              className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm"
+            >
               ❌ {error}
             </div>
           )}
@@ -75,9 +81,9 @@ export default function ChangePasswordModal({ ctx, onClose }) {
               type="password"
               className="input"
               placeholder="Enter your current password"
-              value={currentPassword}
-              onChange={e => setCurrentPassword(e.target.value)}
-              disabled={saving}
+              value={current}
+              onChange={e => setCurrent(e.target.value)}
+              disabled={submitting}
               autoFocus
               autoComplete="current-password"
             />
@@ -91,9 +97,9 @@ export default function ChangePasswordModal({ ctx, onClose }) {
               type="password"
               className="input"
               placeholder="Choose a new password"
-              value={newPassword}
-              onChange={e => setNewPassword(e.target.value)}
-              disabled={saving}
+              value={next}
+              onChange={e => setNext(e.target.value)}
+              disabled={submitting}
               autoComplete="new-password"
             />
           </div>
@@ -106,21 +112,21 @@ export default function ChangePasswordModal({ ctx, onClose }) {
               type="password"
               className="input"
               placeholder="Repeat the new password"
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') submit() }}
-              disabled={saving}
+              value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
+              disabled={submitting}
               autoComplete="new-password"
             />
           </div>
         </div>
 
         <div className="modal-footer">
-          <button className="btn-outline" onClick={onClose} disabled={saving} type="button">
+          <button className="btn-outline" onClick={onClose} disabled={submitting} type="button">
             Cancel
           </button>
-          <button className="btn-gold" onClick={submit} disabled={saving} type="button">
-            {saving ? 'Saving…' : 'Save Password'}
+          <button className="btn-gold" onClick={handleSubmit} disabled={submitting} type="button">
+            {submitting ? 'Saving…' : 'Save Password'}
           </button>
         </div>
       </div>

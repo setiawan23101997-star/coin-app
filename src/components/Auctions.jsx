@@ -89,8 +89,6 @@ function minNextBidFor(auction) {
 
 /**
  * Small pill showing whether the item has been handed out yet.
- * Visible to everyone — this is what tells a regular member that the
- * "Distributed by" column exists and what state it's in.
  */
 function DistributorStatusBadge({ name }) {
   if (name) {
@@ -144,10 +142,6 @@ export default function Auctions({ ctx }) {
     return () => clearInterval(id)
   }, [])
 
-  /**
-   * Auto-fill the bid input with the minimum next bid for every active
-   * auction that doesn't have a value yet.
-   */
   useEffect(() => {
     setBidAmounts(prev => {
       const next = { ...prev }
@@ -473,37 +467,61 @@ export default function Auctions({ ctx }) {
         </div>
       </div>
 
-      {/* ── Rules + "How it works" bar ─────────────────────────────── */}
+      {/* ── Rules + help ───────────────────────────────────────────── */}
       <div className="card mb-4 border-gold/20 bg-void/40">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-text-dim">
-          <span>🔒 Bids lock 5 minutes before the auction ends.</span>
-          <span>📈 Minimum bid increment: +{MIN_BID_INCREMENT} coins.</span>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-text-dim">
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden="true">🔒</span>
+            <span>Bids lock 5 min before end</span>
+          </span>
+          <span className="text-gold/20" aria-hidden="true">·</span>
+          <span className="inline-flex items-center gap-1.5">
+            <span aria-hidden="true">📈</span>
+            <span>Min increment: +{MIN_BID_INCREMENT} coins</span>
+          </span>
+          <span className="text-gold/20" aria-hidden="true">·</span>
+
           <button
             type="button"
             onClick={() => setShowLegend(v => !v)}
             aria-expanded={showLegend}
-            className="text-gold-light hover:text-gold-bright font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold/60 rounded"
+            className="inline-flex items-center gap-1.5 text-[11px] font-semibold rounded-full border border-gold/30 bg-gold/10 text-gold-light hover:text-gold-bright hover:bg-gold/15 hover:border-gold/50 px-3 py-1 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold/60"
           >
-            {showLegend ? '▲ Hide help' : '? What does 🎁 Distributed by mean?'}
+            <span aria-hidden="true" className="text-sm leading-none">💡</span>
+            <span>{showLegend ? 'Hide help' : 'How distribution works'}</span>
+            <span
+              aria-hidden="true"
+              className={`text-[9px] leading-none transition-transform ${showLegend ? 'rotate-180' : ''}`}
+            >
+              ▼
+            </span>
           </button>
         </div>
 
         {showLegend && (
-          <div className="mt-3 pt-3 border-t border-gold/10 text-xs text-text-dim space-y-1.5">
-            <p>
-              <span className="text-gold-light font-semibold">🎁 Distributed by</span> shows which
-              Master or Elder has handed the winning item to the winner in-game.
+          <div className="mt-3 pt-3 border-t border-gold/10 text-xs text-text-dim space-y-2">
+            <p className="flex items-start gap-2">
+              <span className="text-base leading-none flex-shrink-0" aria-hidden="true">🎁</span>
+              <span>
+                <span className="text-gold-light font-semibold">Distributed by</span> shows which Master or
+                Elder has handed the winning item to the winner in-game.
+              </span>
             </p>
-            <p>
-              When an auction ends and someone has won, an admin selects the person who delivered
-              the item. Until then, the row shows{' '}
-              <span className="text-yellow-400 font-semibold">⏳ Awaiting hand-out</span>.
+            <p className="flex items-start gap-2">
+              <span className="text-base leading-none flex-shrink-0" aria-hidden="true">⏳</span>
+              <span>
+                <span className="text-yellow-400 font-semibold">Awaiting hand-out</span> — the winner hasn't
+                received the item yet. An admin will mark it once delivered.
+              </span>
             </p>
-            <p>
-              <span className="text-green-400 font-semibold">✓ Thomas Shelby</span> = already delivered.
-              {' '}
-              <span className="text-text-dim font-semibold">⏱ System</span> = ended automatically
-              by the timer (no human involved).
+            <p className="flex items-start gap-2">
+              <span className="text-base leading-none flex-shrink-0" aria-hidden="true">✓</span>
+              <span>
+                <span className="text-green-400 font-semibold">Name</span> — delivered by that admin.
+                {' '}
+                <span className="text-text-dim font-semibold">⏱ System</span> means the auction ended
+                automatically without a human handing it out.
+              </span>
             </p>
           </div>
         )}
@@ -868,11 +886,6 @@ function AuctionCard({
   )
 }
 
-/**
- * Ended-auction row with an explicit "Distributed by" column that anyone
- * can read. Elders/Admins get an inline dropdown; everyone else sees a
- * status badge explaining the hand-out state.
- */
 function EndedAuctionRow({
   auction: a, now, currentUser, isElder, distributors,
   isExpanded, onToggle, onAssignDistributor, onDelete,
@@ -891,7 +904,6 @@ function EndedAuctionRow({
     <li className={`${isMe ? 'bg-green-500/[0.04]' : ''}`}>
       {/* ── Collapsed row ─────────────────────────────────────── */}
       <div className="flex items-center gap-3 px-4 py-3 hover:bg-void/30 transition-colors">
-        {/* Rarity dot + name */}
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <span
             className="w-2 h-2 rounded-full flex-shrink-0"
@@ -918,7 +930,6 @@ function EndedAuctionRow({
           </div>
         </div>
 
-        {/* Winner */}
         <div className="hidden md:flex items-center gap-1.5 flex-shrink-0 min-w-0" title="Winner">
           <span className="text-sm" aria-hidden="true">🏆</span>
           <span className={`text-xs font-semibold truncate max-w-[120px] ${isMe ? 'text-green-400' : 'text-text-bright'}`}>
@@ -926,7 +937,6 @@ function EndedAuctionRow({
           </span>
         </div>
 
-        {/* Distributor status / picker (desktop) */}
         {winner && (
           <div className="hidden lg:flex items-center gap-1.5 flex-shrink-0 min-w-0" title="Distributed by">
             <span className="text-sm" aria-hidden="true">🎁</span>
@@ -948,7 +958,6 @@ function EndedAuctionRow({
           </div>
         )}
 
-        {/* Final price */}
         <div className="hidden sm:flex items-baseline gap-1 flex-shrink-0">
           <span className="font-mono font-bold text-gold-bright tabular-nums text-sm">
             {(a.currentBid || 0).toLocaleString()}
@@ -956,14 +965,12 @@ function EndedAuctionRow({
           <span className="text-[10px] text-text-dim">coins</span>
         </div>
 
-        {/* Timestamp */}
         {agoLabel && (
           <span className="text-[11px] text-text-dim flex-shrink-0 hidden sm:inline">
             {agoLabel}
           </span>
         )}
 
-        {/* Toggle + delete */}
         <div className="flex items-center gap-1 flex-shrink-0">
           {totalBids > 0 && (
             <button
@@ -990,7 +997,6 @@ function EndedAuctionRow({
         </div>
       </div>
 
-      {/* ── Mobile-only summary row ── */}
       <div className="md:hidden flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-xs">
         {winner && (
           <span className="flex items-center gap-1">
@@ -1007,7 +1013,6 @@ function EndedAuctionRow({
         {agoLabel && <span className="text-text-dim">{agoLabel}</span>}
       </div>
 
-      {/* ── Distributor row on narrow screens ──────────────────── */}
       {winner && (
         <div className="lg:hidden flex items-center gap-2 px-4 pb-3 text-xs">
           <span aria-hidden="true">🎁</span>
@@ -1030,7 +1035,6 @@ function EndedAuctionRow({
         </div>
       )}
 
-      {/* ── Expanded bid history ───────────────────────────────── */}
       {isExpanded && totalBids > 0 && (
         <div className="px-4 pb-3">
           <div className="rounded-lg bg-void/40 border border-gold/10 overflow-hidden">
@@ -1062,7 +1066,6 @@ function EndedAuctionRow({
         </div>
       )}
 
-      {/* ── Footer (exact timestamp) — only shown when expanded ── */}
       {isExpanded && (
         <div className="px-4 pb-3 text-[10px] text-text-dim">
           Ended {endedAt > 0 ? formatDateTime(endedAt) : '—'} · GMT+8

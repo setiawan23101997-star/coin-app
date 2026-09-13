@@ -1,36 +1,41 @@
 import React, { useState } from 'react'
 
 export default function ResetPasswordModal({ ctx, member, onClose }) {
-  const { addToast, supabase, reloadMembers } = ctx
+  const { resetMemberPassword, currentUser } = ctx
   const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
+  const [confirm, setConfirm] = useState('')
   const [error, setError] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
-  const submit = async () => {
+  const handleSubmit = async () => {
     setError('')
-    if (!newPassword) { setError('Enter a new password.'); return }
-    if (newPassword.length < 4) { setError('Password must be at least 4 characters.'); return }
-    if (newPassword !== confirmPassword) { setError('Passwords do not match.'); return }
 
-    setSaving(true)
+    if (!newPassword) {
+      setError('Enter a new password.')
+      return
+    }
+    if (newPassword.length < 4) {
+      setError('Password must be at least 4 characters.')
+      return
+    }
+    if (newPassword !== confirm) {
+      setError('Passwords do not match.')
+      return
+    }
+
+    setSubmitting(true)
     try {
-      const { error: updErr } = await supabase
-        .from('members')
-        .update({ password: newPassword })
-        .eq('id', member.id)
-
-      if (updErr) throw updErr
-
-      if (reloadMembers) await reloadMembers()
-
-      addToast(`${member.name}'s password has been reset.`, 'gold', 'Password Reset')
-      onClose()
-    } catch (e) {
-      console.error('Reset password failed:', e)
-      setError('Could not reset the password. Please try again.')
+      const ok = await resetMemberPassword(member.id, newPassword)
+      if (ok) {
+        onClose()
+      } else {
+        setError('Could not reset the password. Please try again.')
+      }
+    } catch (err) {
+      console.error('Reset password failed:', err)
+      setError(err.message || 'Could not reset the password. Please try again.')
     } finally {
-      setSaving(false)
+      setSubmitting(false)
     }
   }
 
@@ -51,12 +56,16 @@ export default function ResetPasswordModal({ ctx, member, onClose }) {
 
         <div className="modal-body space-y-4">
           <div className="text-xs text-text-dim">
-            Set a new password for <span className="text-gold-light font-semibold">{member.name}</span>.
+            Set a new password for{' '}
+            <span className="text-gold-light font-semibold">{member.name}</span>.
             They can change it themselves afterwards.
           </div>
 
           {error && (
-            <div className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm">
+            <div
+              role="alert"
+              className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm"
+            >
               ❌ {error}
             </div>
           )}
@@ -71,7 +80,7 @@ export default function ResetPasswordModal({ ctx, member, onClose }) {
               placeholder="Set a temporary password"
               value={newPassword}
               onChange={e => setNewPassword(e.target.value)}
-              disabled={saving}
+              disabled={submitting}
               autoFocus
             />
           </div>
@@ -84,20 +93,20 @@ export default function ResetPasswordModal({ ctx, member, onClose }) {
               type="text"
               className="input font-mono"
               placeholder="Repeat the password"
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') submit() }}
-              disabled={saving}
+              value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSubmit() }}
+              disabled={submitting}
             />
           </div>
         </div>
 
         <div className="modal-footer">
-          <button className="btn-outline" onClick={onClose} disabled={saving} type="button">
+          <button className="btn-outline" onClick={onClose} disabled={submitting} type="button">
             Cancel
           </button>
-          <button className="btn-gold" onClick={submit} disabled={saving} type="button">
-            {saving ? 'Saving…' : 'Reset Password'}
+          <button className="btn-gold" onClick={handleSubmit} disabled={submitting} type="button">
+            {submitting ? 'Saving…' : 'Reset Password'}
           </button>
         </div>
       </div>

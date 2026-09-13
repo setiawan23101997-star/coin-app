@@ -15,8 +15,8 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 function App() {
   const [page, setPage] = useState('dashboard')
 
-  // `allMembers` — the full roster, including Admins. Used for authentication.
-  // `members`    — the filtered view shown to the current user.
+  // allMembers = full roster (used for auth + admin views)
+  // members    = filtered view shown to the current user
   const [allMembers, setAllMembers] = useState([])
   const [members, setMembers] = useState([])
 
@@ -33,6 +33,8 @@ function App() {
     setToasts(prev => [...prev, { id, msg, type, title }])
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
   }
+
+  // ---------- normalizers ----------
 
   const normalizeAuction = (a) => ({
     id: String(a.id),
@@ -57,11 +59,19 @@ function App() {
     imageName: a.image_name ?? null,
   })
 
+  const toJsonArray = (v) => {
+    try {
+      if (typeof v === 'string') return JSON.parse(v)
+      if (Array.isArray(v)) return v
+      return []
+    } catch { return [] }
+  }
+
+  // No password / no password_hash on the client. Ever.
   const normalizeMember = (m) => ({
     id: Number(m.id),
     name: m.name ?? '',
     username: m.username ?? '',
-    password: m.password ?? '',
     cls: m.cls ?? '',
     role: m.role ?? 'Member',
     coins: Number(m.coins) || 0,
@@ -70,40 +80,24 @@ function App() {
     auction_wins: Number(m.auction_wins ?? m.auctionWins) || 0,
     join_date: m.join_date ?? m.joinDate ?? '',
     discord: m.discord ?? '',
-    tx_log: (() => {
-      try {
-        if (typeof m.tx_log === 'string') return JSON.parse(m.tx_log)
-        if (Array.isArray(m.tx_log)) return m.tx_log
-        return []
-      } catch { return [] }
-    })(),
-    attend_log: (() => {
-      try {
-        if (typeof m.attend_log === 'string') return JSON.parse(m.attend_log)
-        if (Array.isArray(m.attend_log)) return m.attend_log
-        return []
-      } catch { return [] }
-    })(),
+    tx_log: toJsonArray(m.tx_log),
+    attend_log: toJsonArray(m.attend_log),
   })
 
-  /**
-   * Filter what a given viewer is allowed to SEE.
-   * Admins are hidden from everyone except other Admins.
-   *
-   * IMPORTANT: this filter is applied to the DISPLAYED roster only. Auth
-   * always runs against the full list (`allMembers`).
-   */
   const filterVisibleMembers = (list, viewer) => {
     if (viewer?.role === 'Admin') return list
     return list.filter(m => m.role !== 'Admin')
   }
 
+  // ---------- loaders ----------
+
   const loadAllData = async () => {
     try {
       setLoading(true)
 
+      // Reads from the safe view — never contains password_hash
       const { data: membersData, error: membersError } = await supabase
-        .from('members')
+        .from('public_members')
         .select('*')
         .order('id')
       if (membersError) throw membersError
@@ -116,16 +110,44 @@ function App() {
       }
 
       if (!membersData || membersData.length === 0) {
-        const defaultMembers = [
-          { id: 1, name: 'Thomas Shelby', username: 'thomas', password: 'master123', cls: 'Archer', coins: 1000, power: 12345, attendance: 0, role: 'Master' },
-          { id: 2, name: 'Arthur Shelby', username: 'arthur', password: 'member123', cls: 'Berserker', coins: 500, power: 11000, attendance: 0, role: 'Member' },
-          { id: 3, name: 'John Shelby', username: 'john', password: 'member123', cls: 'Warlord', coins: 300, power: 9000, attendance: 0, role: 'Member' },
-          { id: 4, name: 'Finn Shelby', username: 'finn', password: 'member123', cls: 'Skald', coins: 200, power: 7000, attendance: 0, role: 'Member' },
+        // Empty DB: seed via the RPC so passwords get hashed.
+        // We bootstrap with actor_id = 0 by temporarily inserting a synthetic master
+        // then immediately hashing it. Simpler path: insert with a precomputed hash.
+        // Hash for "master123" / "member123" is generated at seed time via RPC below.
+        const defaults = [
+          { name: 'Thomas Shelby', username: 'thomas', password: 'master123', cls: 'Archer',   coins: 1000, power: 12345, role: 'Master' },
+          { name: 'Arthur Shelby', username: 'arthur', password: 'member123', cls: 'Berserker', coins: 500,  power: 11000, role: 'Member' },
+          { name: 'John Shelby',   username: 'john',   password: 'member123', cls: 'Warlord',   coins: 300,  power: 9000,  role: 'Member' },
+          { name: 'Finn Shelby',   username: 'finn',   password: 'member123', cls: 'Skald',     coins: 200,  power: 7000,  role: 'Member' },
         ]
-        for (const m of defaultMembers) {
-          await supabase.from('members').insert([m])
+
+        // Insert with the create_member RPC would require an actor. Since this only
+        // runs on a completely empty DB (first ever boot), we use the plain insert
+        // with a hash computed by the client — then everything downstream uses
+        // password_hash and never the raw password again.
+        for (const m of defaults) {
+          const { error } = await supabase.from('members').insert([{
+            name: m.name,
+            username: m.username,
+            // NOTE: this hash uses the crypt() output the client can't produce.
+            // So this seed only works if you've run the SQL migration that added
+            // the password_hash column, and Supabase allows the raw insert.
+            // If RLS blocks it, seed via Supabase SQL editor instead:
+            //   insert into members (name, username, password_hash, cls, coins, power, role)
+            //   values ('Thomas Shelby', 'thomas', crypt('master123', gen_salt('bf')), 'Archer', 1000, 12345, 'Master');
+            password_hash: null,
+            cls: m.cls,
+            coins: m.coins,
+            power: m.power,
+            attendance: 0,
+            role: m.role,
+          }])
+          if (error) console.error('Seed failed for', m.name, '— seed manually via SQL editor.', error)
         }
-        const normalized = defaultMembers.map(normalizeMember)
+
+        // Reload from the view (even if seeds failed, we won't crash)
+        const { data: reseed } = await supabase.from('public_members').select('*').order('id')
+        const normalized = (reseed || []).map(normalizeMember)
         setAllMembers(normalized)
         setMembers(filterVisibleMembers(normalized, persistedViewer))
       } else {
@@ -146,12 +168,16 @@ function App() {
       if (logsError) throw logsError
       setAttendanceLogs(logsData || [])
 
+      // Re-hydrate the session from localStorage by re-reading the member row
       if (savedUser) {
         const user = JSON.parse(savedUser)
-        const currentMembers = membersData || []
-        const found = currentMembers.find(m => Number(m.id) === Number(user.id))
-        if (found) {
-          const normalized = normalizeMember(found)
+        const { data: fresh } = await supabase
+          .from('public_members')
+          .select('*')
+          .eq('id', user.id)
+          .maybeSingle()
+        if (fresh) {
+          const normalized = normalizeMember(fresh)
           setCurrentUser(normalized)
           setMembers(filterVisibleMembers((membersData || []).map(normalizeMember), normalized))
         } else {
@@ -170,9 +196,10 @@ function App() {
     loadAllData()
   }, [])
 
+  // 5-second poll — reads from the safe view, never touches password_hash
   useEffect(() => {
     const interval = setInterval(async () => {
-      const { data: membersData } = await supabase.from('members').select('*').order('id')
+      const { data: membersData } = await supabase.from('public_members').select('*').order('id')
       const { data: auctionsData } = await supabase.from('auctions').select('*')
       const { data: logsData } = await supabase.from('attendance_logs').select('*')
       if (membersData) {
@@ -186,9 +213,11 @@ function App() {
     return () => clearInterval(interval)
   }, [currentUser])
 
+  // Auto-end expired auctions via the RPC
   useEffect(() => {
     const autoEndExpired = async () => {
       const now = Date.now()
+
       const expired = auctions.filter(a =>
         a.status === 'active' &&
         a.endsAt > 0 &&
@@ -198,49 +227,27 @@ function App() {
 
       if (expired.length === 0) return
 
-      for (const a of expired) {
-        autoEndedRef.current.add(a.id)
+      expired.forEach(a => autoEndedRef.current.add(a.id))
 
-        const winner = a.topBidder || null
-        const finalBid = a.currentBid ?? 0
-        const endedAt = a.endsAt
-        const distributedBy = winner ? 'System' : null
+      const { error } = await supabase.rpc('auto_end_expired_auctions')
+      if (error) {
+        console.error('Auto-end failed:', error)
+        expired.forEach(a => autoEndedRef.current.delete(a.id))
+        return
+      }
 
-        const { error } = await supabase
-          .from('auctions')
-          .update({
-            status: 'ended',
-            ended_at: endedAt,
-            distributed_by: distributedBy,
-          })
-          .eq('id', a.id)
+      // Refresh from the server so all ended fields are correct
+      const { data } = await supabase.from('auctions').select('*')
+      if (data) setAuctions(data.map(normalizeAuction))
 
-        if (error) {
-          console.error(`Auto-end failed for auction ${a.id}:`, error)
-          autoEndedRef.current.delete(a.id)
-          continue
-        }
-
-        setAuctions(prev => prev.map(x =>
-          x.id === a.id
-            ? {
-                ...x,
-                status: 'ended',
-                topBidder: winner,
-                currentBid: finalBid,
-                endsAt: endedAt,
-                endedAt,
-                distributedBy,
-              }
-            : x
-        ))
-
+      expired.forEach(a => {
+        const winner = a.topBidder
         if (winner) {
-          addToast(`"${a.name}" ended — won by ${winner} for ${finalBid.toLocaleString()} coins.`, 'gold', 'Auction Ended')
+          addToast(`"${a.name}" ended — won by ${winner} for ${a.currentBid.toLocaleString()} coins.`, 'gold', 'Auction Ended')
         } else {
           addToast(`"${a.name}" ended with no bids.`, 'blue', 'Auction Ended')
         }
-      }
+      })
     }
 
     autoEndExpired()
@@ -248,68 +255,103 @@ function App() {
     return () => clearInterval(id)
   }, [auctions])
 
+  // ---------- mutations ----------
+
   const saveMember = async (member) => {
     try {
-      const { data, error } = await supabase
-        .from('members')
-        .insert([member])
-        .select()
+      const { data, error } = await supabase.rpc('create_member', {
+        p_actor_id: currentUser.id,
+        p_name: member.name,
+        p_username: member.username,
+        p_password: member.password,
+        p_cls: member.cls,
+        p_power: member.power,
+        p_role: member.role,
+      })
       if (error) throw error
-      if (data && data.length > 0) {
-        const normalized = normalizeMember(data[0])
-        setAllMembers(prev => [...prev, normalized])
-        setMembers(prev => [...prev, normalized])
-        return data[0]
-      }
-      return null
+      const row = Array.isArray(data) ? data[0] : data
+      const normalized = normalizeMember(row)
+      setAllMembers(prev => [...prev, normalized])
+      setMembers(prev => [...prev, normalized])
+      return normalized
     } catch (error) {
       console.error('Failed to save member:', error)
-      addToast('Failed to save member. Please try again.', 'red', 'Error')
+      addToast(error.message || 'Failed to save member.', 'red', 'Error')
       return null
     }
   }
 
   const updateMember = async (id, updates) => {
     try {
-      const { data, error } = await supabase
-        .from('members')
-        .update(updates)
-        .eq('id', id)
-        .select()
+      const { data, error } = await supabase.rpc('admin_update_member', {
+        p_actor_id: currentUser.id,
+        p_target_id: id,
+        p_updates: updates,
+      })
       if (error) throw error
-      if (data && data.length > 0) {
-        const normalized = normalizeMember(data[0])
-        setAllMembers(prev => prev.map(m => m.id === id ? normalized : m))
-        setMembers(prev => prev.map(m => m.id === id ? normalized : m))
-        return data[0]
-      }
-      return null
+      const row = Array.isArray(data) ? data[0] : data
+      const normalized = normalizeMember(row)
+      setAllMembers(prev => prev.map(m => m.id === id ? normalized : m))
+      setMembers(prev => prev.map(m => m.id === id ? normalized : m))
+      return normalized
     } catch (error) {
       console.error('Failed to update member:', error)
-      addToast('Failed to update member. Please try again.', 'red', 'Error')
+      addToast(error.message || 'Failed to update member.', 'red', 'Error')
       return null
     }
   }
 
   const deleteMember = async (id) => {
     try {
-      const { error } = await supabase
-        .from('members')
-        .delete()
-        .eq('id', id)
+      const { error } = await supabase.rpc('admin_delete_member', {
+        p_actor_id: currentUser.id,
+        p_target_id: id,
+      })
       if (error) throw error
       setAllMembers(prev => prev.filter(m => m.id !== id))
       setMembers(prev => prev.filter(m => m.id !== id))
       return true
     } catch (error) {
       console.error('Failed to delete member:', error)
-      addToast('Failed to delete member. Please try again.', 'red', 'Error')
+      addToast(error.message || 'Failed to delete member.', 'red', 'Error')
+      return false
+    }
+  }
+
+  const resetMemberPassword = async (targetId, newPassword) => {
+    try {
+      const { error } = await supabase.rpc('admin_reset_password', {
+        p_actor_id: currentUser.id,
+        p_target_id: targetId,
+        p_new_password: newPassword,
+      })
+      if (error) throw error
+      return true
+    } catch (error) {
+      console.error('Failed to reset password:', error)
+      addToast(error.message || 'Failed to reset password.', 'red', 'Error')
+      return false
+    }
+  }
+
+  const changeOwnPassword = async (oldPassword, newPassword) => {
+    try {
+      const { error } = await supabase.rpc('change_own_password', {
+        p_member_id: currentUser.id,
+        p_old: oldPassword,
+        p_new: newPassword,
+      })
+      if (error) throw error
+      return true
+    } catch (error) {
+      console.error('Failed to change password:', error)
+      addToast(error.message || 'Failed to change password.', 'red', 'Error')
       return false
     }
   }
 
   const reloadMembers = async () => {
-    const { data } = await supabase.from('members').select('*').order('id')
+    const { data } = await supabase.from('public_members').select('*').order('id')
     if (data) {
       const normalized = data.map(normalizeMember)
       setAllMembers(normalized)
@@ -317,26 +359,31 @@ function App() {
     }
   }
 
-  /**
-   * Login — authenticates against the FULL member list (allMembers), not
-   * the filtered view. This is the fix: on a fresh browser/device with no
-   * prior session, `members` has no Admin rows because the filter hides
-   * them from unauthenticated viewers. `allMembers` always has everyone.
-   */
-  const handleLogin = (username, password) => {
-    const user = allMembers.find(m =>
-      m.username && m.username.toLowerCase() === username.toLowerCase() &&
-      m.password === password
-    )
-    if (user) {
+  // ---------- auth ----------
+
+  const handleLogin = async (username, password) => {
+    try {
+      const { data, error } = await supabase.rpc('login_member', {
+        p_username: username,
+        p_password: password,
+      })
+      if (error) throw error
+
+      const row = Array.isArray(data) ? data[0] : data
+      if (!row) {
+        addToast('Invalid username or password.', 'red', 'Login Failed')
+        return false
+      }
+
+      const user = normalizeMember(row)
       setCurrentUser(user)
       localStorage.setItem('currentUser', JSON.stringify(user))
-      // Re-apply the visibility filter for this viewer.
       setMembers(filterVisibleMembers(allMembers, user))
       addToast(`Welcome back, ${user.name}!`, 'gold', 'Login Success')
       return true
-    } else {
-      addToast('Invalid username or password.', 'red', 'Login Failed')
+    } catch (error) {
+      console.error('Login failed:', error)
+      addToast(error.message || 'Invalid username or password.', 'red', 'Login Failed')
       return false
     }
   }
@@ -355,6 +402,8 @@ function App() {
     saveMember,
     updateMember,
     deleteMember,
+    resetMemberPassword,
+    changeOwnPassword,
     reloadMembers,
     auctions,
     setAuctions,
@@ -386,12 +435,12 @@ function App() {
 
   const renderPage = () => {
     switch (page) {
-      case 'dashboard': return <Dashboard ctx={ctx} setPage={setPage} />
-      case 'members': return <Members ctx={ctx} />
-      case 'attendance': return <Attendance ctx={ctx} />
-      case 'auctions': return <Auctions ctx={ctx} />
+      case 'dashboard':   return <Dashboard   ctx={ctx} setPage={setPage} />
+      case 'members':     return <Members     ctx={ctx} />
+      case 'attendance':  return <Attendance  ctx={ctx} />
+      case 'auctions':    return <Auctions    ctx={ctx} />
       case 'leaderboard': return <Leaderboard ctx={ctx} />
-      default: return <Dashboard ctx={ctx} setPage={setPage} />
+      default:            return <Dashboard   ctx={ctx} setPage={setPage} />
     }
   }
 

@@ -14,7 +14,12 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 
 function App() {
   const [page, setPage] = useState('dashboard')
+
+  // allMembers = the FULL roster, including Admin. Never filtered.
+  // members    = the roster as the current viewer is allowed to see it.
+  const [allMembers, setAllMembers] = useState([])
   const [members, setMembers] = useState([])
+
   const [auctions, setAuctions] = useState([])
   const [attendanceLogs, setAttendanceLogs] = useState([])
   const [currentUser, setCurrentUser] = useState(null)
@@ -28,6 +33,8 @@ function App() {
     setToasts(prev => [...prev, { id, msg, type, title }])
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000)
   }
+
+  // ---------- normalizers ----------
 
   const normalizeAuction = (a) => ({
     id: String(a.id),
@@ -77,10 +84,13 @@ function App() {
     attend_log: toJsonArray(m.attend_log),
   })
 
+  // Filter what a viewer is allowed to SEE. Never used for auth.
   const filterVisibleMembers = (list, viewer) => {
     if (viewer?.role === 'Admin') return list
     return list.filter(m => m.role !== 'Admin')
   }
+
+  // ---------- loaders ----------
 
   const loadAllData = async () => {
     try {
@@ -109,9 +119,12 @@ function App() {
         for (const m of defaultMembers) {
           await supabase.from('members').insert([m])
         }
-        setMembers(defaultMembers)
+        const normalized = defaultMembers.map(normalizeMember)
+        setAllMembers(normalized)
+        setMembers(filterVisibleMembers(normalized, persistedViewer))
       } else {
         const normalized = membersData.map(normalizeMember)
+        setAllMembers(normalized)
         setMembers(filterVisibleMembers(normalized, persistedViewer))
       }
 
@@ -127,6 +140,7 @@ function App() {
       if (logsError) throw logsError
       setAttendanceLogs(logsData || [])
 
+      // Re-hydrate session from localStorage
       if (savedUser) {
         const user = JSON.parse(savedUser)
         const currentMembers = membersData || []
@@ -151,6 +165,7 @@ function App() {
     loadAllData()
   }, [])
 
+  // 5-second poll
   useEffect(() => {
     const interval = setInterval(async () => {
       const { data: membersData } = await supabase.from('members').select('*').order('id')
@@ -158,6 +173,7 @@ function App() {
       const { data: logsData } = await supabase.from('attendance_logs').select('*')
       if (membersData) {
         const normalized = membersData.map(normalizeMember)
+        setAllMembers(normalized)
         setMembers(filterVisibleMembers(normalized, currentUser))
       }
       if (auctionsData) setAuctions(auctionsData.map(normalizeAuction))
@@ -166,7 +182,7 @@ function App() {
     return () => clearInterval(interval)
   }, [currentUser])
 
-  // Auto-end expired auctions — done directly against the table now
+  // Auto-end expired auctions (direct table write)
   useEffect(() => {
     const autoEndExpired = async () => {
       const now = Date.now()
@@ -222,6 +238,8 @@ function App() {
     return () => clearInterval(id)
   }, [auctions])
 
+  // ---------- mutations ----------
+
   const saveMember = async (member) => {
     try {
       const { data, error } = await supabase
@@ -231,6 +249,7 @@ function App() {
       if (error) throw error
       if (data && data.length > 0) {
         const normalized = normalizeMember(data[0])
+        setAllMembers(prev => [...prev, normalized])
         setMembers(prev => [...prev, normalized])
         return normalized
       }
@@ -252,6 +271,7 @@ function App() {
       if (error) throw error
       if (data && data.length > 0) {
         const normalized = normalizeMember(data[0])
+        setAllMembers(prev => prev.map(m => m.id === id ? normalized : m))
         setMembers(prev => prev.map(m => m.id === id ? normalized : m))
         return normalized
       }
@@ -270,6 +290,7 @@ function App() {
         .delete()
         .eq('id', id)
       if (error) throw error
+      setAllMembers(prev => prev.filter(m => m.id !== id))
       setMembers(prev => prev.filter(m => m.id !== id))
       return true
     } catch (error) {
@@ -320,22 +341,50 @@ function App() {
     const { data } = await supabase.from('members').select('*').order('id')
     if (data) {
       const normalized = data.map(normalizeMember)
+      setAllMembers(normalized)
       setMembers(filterVisibleMembers(normalized, currentUser))
     }
   }
 
-  const handleLogin = (username, password) => {
-    const user = members.find(m =>
-      m.username && m.username.toLowerCase() === username.toLowerCase() &&
-      m.password === password
-    )
-    if (user) {
+  // ---------- auth ----------
+
+  /**
+   * Login. Searches the FULL roster (allMembers), not the filtered `members`.
+   * The filter exists so unauthenticated viewers can't SEE Admin rows in the
+   * UI — but it must never gate who is allowed to authenticate.
+   */
+  const handleLogin = async (username, password) => {
+    try {
+      // Fetch fresh from DB so we're not dependent on allMembers being populated
+      const { data, error } = await supabase
+        .from('members')
+        .select('*')
+      if (error) throw error
+
+      const target = (data || []).find(m =>
+        m.username && m.username.toLowerCase() === username.toLowerCase() &&
+        m.password === password
+      )
+
+      if (!target) {
+        addToast('Invalid username or password.', 'red', 'Login Failed')
+        return false
+      }
+
+      const user = normalizeMember(target)
       setCurrentUser(user)
       localStorage.setItem('currentUser', JSON.stringify(user))
+
+      // Refresh full roster and re-apply the visibility filter for this viewer
+      const normalized = (data || []).map(normalizeMember)
+      setAllMembers(normalized)
+      setMembers(filterVisibleMembers(normalized, user))
+
       addToast(`Welcome back, ${user.name}!`, 'gold', 'Login Success')
       return true
-    } else {
-      addToast('Invalid username or password.', 'red', 'Login Failed')
+    } catch (error) {
+      console.error('Login failed:', error)
+      addToast('Could not connect to database.', 'red', 'Login Failed')
       return false
     }
   }
@@ -343,12 +392,14 @@ function App() {
   const handleLogout = () => {
     setCurrentUser(null)
     localStorage.removeItem('currentUser')
+    setMembers(filterVisibleMembers(allMembers, null))
     addToast('Logged out successfully.', 'blue', 'Goodbye')
   }
 
   const ctx = {
     members,
     setMembers,
+    allMembers,
     saveMember,
     updateMember,
     deleteMember,

@@ -15,8 +15,6 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 function App() {
   const [page, setPage] = useState('dashboard')
 
-  // allMembers = full roster (used for auth + admin views)
-  // members    = filtered view shown to the current user
   const [allMembers, setAllMembers] = useState([])
   const [members, setMembers] = useState([])
 
@@ -67,7 +65,6 @@ function App() {
     } catch { return [] }
   }
 
-  // No password / no password_hash on the client. Ever.
   const normalizeMember = (m) => ({
     id: Number(m.id),
     name: m.name ?? '',
@@ -95,7 +92,6 @@ function App() {
     try {
       setLoading(true)
 
-      // Reads from the safe view — never contains password_hash
       const { data: membersData, error: membersError } = await supabase
         .from('public_members')
         .select('*')
@@ -110,46 +106,13 @@ function App() {
       }
 
       if (!membersData || membersData.length === 0) {
-        // Empty DB: seed via the RPC so passwords get hashed.
-        // We bootstrap with actor_id = 0 by temporarily inserting a synthetic master
-        // then immediately hashing it. Simpler path: insert with a precomputed hash.
-        // Hash for "master123" / "member123" is generated at seed time via RPC below.
-        const defaults = [
-          { name: 'Thomas Shelby', username: 'thomas', password: 'master123', cls: 'Archer',   coins: 1000, power: 12345, role: 'Master' },
-          { name: 'Arthur Shelby', username: 'arthur', password: 'member123', cls: 'Berserker', coins: 500,  power: 11000, role: 'Member' },
-          { name: 'John Shelby',   username: 'john',   password: 'member123', cls: 'Warlord',   coins: 300,  power: 9000,  role: 'Member' },
-          { name: 'Finn Shelby',   username: 'finn',   password: 'member123', cls: 'Skald',     coins: 200,  power: 7000,  role: 'Member' },
-        ]
-
-        // Insert with the create_member RPC would require an actor. Since this only
-        // runs on a completely empty DB (first ever boot), we use the plain insert
-        // with a hash computed by the client — then everything downstream uses
-        // password_hash and never the raw password again.
-        for (const m of defaults) {
-          const { error } = await supabase.from('members').insert([{
-            name: m.name,
-            username: m.username,
-            // NOTE: this hash uses the crypt() output the client can't produce.
-            // So this seed only works if you've run the SQL migration that added
-            // the password_hash column, and Supabase allows the raw insert.
-            // If RLS blocks it, seed via Supabase SQL editor instead:
-            //   insert into members (name, username, password_hash, cls, coins, power, role)
-            //   values ('Thomas Shelby', 'thomas', crypt('master123', gen_salt('bf')), 'Archer', 1000, 12345, 'Master');
-            password_hash: null,
-            cls: m.cls,
-            coins: m.coins,
-            power: m.power,
-            attendance: 0,
-            role: m.role,
-          }])
-          if (error) console.error('Seed failed for', m.name, '— seed manually via SQL editor.', error)
-        }
-
-        // Reload from the view (even if seeds failed, we won't crash)
-        const { data: reseed } = await supabase.from('public_members').select('*').order('id')
-        const normalized = (reseed || []).map(normalizeMember)
-        setAllMembers(normalized)
-        setMembers(filterVisibleMembers(normalized, persistedViewer))
+        // Empty DB — the seed has to run in the SQL editor because the client
+        // can't produce a bcrypt hash. Just tell the user.
+        console.warn('Members table is empty. Seed via Supabase SQL editor:')
+        console.warn("insert into members (name, username, password_hash, cls, coins, power, role)")
+        console.warn("values ('Thomas Shelby', 'thomas', crypt('master123', gen_salt('bf')), 'Archer', 1000, 12345, 'Master');")
+        setAllMembers([])
+        setMembers([])
       } else {
         const normalized = membersData.map(normalizeMember)
         setAllMembers(normalized)
@@ -168,7 +131,7 @@ function App() {
       if (logsError) throw logsError
       setAttendanceLogs(logsData || [])
 
-      // Re-hydrate the session from localStorage by re-reading the member row
+      // Re-hydrate the session from localStorage
       if (savedUser) {
         const user = JSON.parse(savedUser)
         const { data: fresh } = await supabase
@@ -178,9 +141,11 @@ function App() {
           .maybeSingle()
         if (fresh) {
           const normalized = normalizeMember(fresh)
+          console.log('[session restore] currentUser.id =', normalized.id)
           setCurrentUser(normalized)
           setMembers(filterVisibleMembers((membersData || []).map(normalizeMember), normalized))
         } else {
+          console.warn('[session restore] no member found for id', user.id, '— clearing localStorage')
           localStorage.removeItem('currentUser')
         }
       }
@@ -196,7 +161,7 @@ function App() {
     loadAllData()
   }, [])
 
-  // 5-second poll — reads from the safe view, never touches password_hash
+  // 5-second poll
   useEffect(() => {
     const interval = setInterval(async () => {
       const { data: membersData } = await supabase.from('public_members').select('*').order('id')
@@ -236,7 +201,6 @@ function App() {
         return
       }
 
-      // Refresh from the server so all ended fields are correct
       const { data } = await supabase.from('auctions').select('*')
       if (data) setAuctions(data.map(normalizeAuction))
 
@@ -275,7 +239,7 @@ function App() {
       setMembers(prev => [...prev, normalized])
       return normalized
     } catch (error) {
-      console.error('Failed to save member:', error)
+      console.error('[saveMember] failed:', error)
       addToast(error.message || 'Failed to save member.', 'red', 'Error')
       return null
     }
@@ -295,7 +259,7 @@ function App() {
       setMembers(prev => prev.map(m => m.id === id ? normalized : m))
       return normalized
     } catch (error) {
-      console.error('Failed to update member:', error)
+      console.error('[updateMember] failed:', error)
       addToast(error.message || 'Failed to update member.', 'red', 'Error')
       return null
     }
@@ -312,41 +276,96 @@ function App() {
       setMembers(prev => prev.filter(m => m.id !== id))
       return true
     } catch (error) {
-      console.error('Failed to delete member:', error)
+      console.error('[deleteMember] failed:', error)
       addToast(error.message || 'Failed to delete member.', 'red', 'Error')
       return false
     }
   }
 
-  const resetMemberPassword = async (targetId, newPassword) => {
-    try {
-      const { error } = await supabase.rpc('admin_reset_password', {
-        p_actor_id: currentUser.id,
-        p_target_id: targetId,
-        p_new_password: newPassword,
-      })
-      if (error) throw error
-      return true
-    } catch (error) {
-      console.error('Failed to reset password:', error)
-      addToast(error.message || 'Failed to reset password.', 'red', 'Error')
-      return false
-    }
-  }
-
+  /**
+   * Change the logged-in user's own password.
+   *
+   * Returns { ok: boolean, error?: string } so the modal can show the exact
+   * server error inline (e.g. "Current password is incorrect" vs "Too many
+   * failed attempts").
+   */
   const changeOwnPassword = async (oldPassword, newPassword) => {
+    if (!currentUser || !currentUser.id) {
+      console.error('[changeOwnPassword] no currentUser.id — aborting')
+      return { ok: false, error: 'You are not logged in. Please log out and log back in.' }
+    }
+
+    console.log('[changeOwnPassword] calling RPC with:', {
+      p_member_id: currentUser.id,
+      oldLen: oldPassword?.length ?? 0,
+      newLen: newPassword?.length ?? 0,
+    })
+
     try {
-      const { error } = await supabase.rpc('change_own_password', {
+      const { data, error } = await supabase.rpc('change_own_password', {
         p_member_id: currentUser.id,
         p_old: oldPassword,
         p_new: newPassword,
       })
-      if (error) throw error
-      return true
-    } catch (error) {
-      console.error('Failed to change password:', error)
-      addToast(error.message || 'Failed to change password.', 'red', 'Error')
-      return false
+
+      if (error) {
+        console.error('[changeOwnPassword] RPC error:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        })
+        return { ok: false, error: error.message || 'Could not change the password.' }
+      }
+
+      console.log('[changeOwnPassword] success:', data)
+      addToast('Your password has been updated.', 'gold', 'Password Changed')
+      return { ok: true }
+    } catch (err) {
+      console.error('[changeOwnPassword] threw:', err)
+      return { ok: false, error: err.message || 'Could not change the password.' }
+    }
+  }
+
+  /**
+   * Admin resets another member's password.
+   * Returns { ok, error } for the same reason.
+   */
+  const resetMemberPassword = async (targetId, newPassword) => {
+    if (!currentUser || !currentUser.id) {
+      console.error('[resetMemberPassword] no currentUser.id — aborting')
+      return { ok: false, error: 'You are not logged in. Please log out and log back in.' }
+    }
+
+    console.log('[resetMemberPassword] calling RPC with:', {
+      p_actor_id: currentUser.id,
+      p_target_id: targetId,
+      newLen: newPassword?.length ?? 0,
+    })
+
+    try {
+      const { data, error } = await supabase.rpc('admin_reset_password', {
+        p_actor_id: currentUser.id,
+        p_target_id: targetId,
+        p_new_password: newPassword,
+      })
+
+      if (error) {
+        console.error('[resetMemberPassword] RPC error:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        })
+        return { ok: false, error: error.message || 'Could not reset the password.' }
+      }
+
+      console.log('[resetMemberPassword] success:', data)
+      addToast('Password reset successfully.', 'gold', 'Updated')
+      return { ok: true }
+    } catch (err) {
+      console.error('[resetMemberPassword] threw:', err)
+      return { ok: false, error: err.message || 'Could not reset the password.' }
     }
   }
 
@@ -372,19 +391,21 @@ function App() {
       const row = Array.isArray(data) ? data[0] : data
       if (!row) {
         addToast('Invalid username or password.', 'red', 'Login Failed')
-        return false
+        return { ok: false, error: 'Invalid username or password.' }
       }
 
       const user = normalizeMember(row)
+      console.log('[handleLogin] logged in as:', user.name, 'id =', user.id)
       setCurrentUser(user)
       localStorage.setItem('currentUser', JSON.stringify(user))
       setMembers(filterVisibleMembers(allMembers, user))
       addToast(`Welcome back, ${user.name}!`, 'gold', 'Login Success')
-      return true
+      return { ok: true }
     } catch (error) {
-      console.error('Login failed:', error)
-      addToast(error.message || 'Invalid username or password.', 'red', 'Login Failed')
-      return false
+      console.error('[handleLogin] failed:', error)
+      const msg = error.message || 'Invalid username or password.'
+      addToast(msg, 'red', 'Login Failed')
+      return { ok: false, error: msg }
     }
   }
 

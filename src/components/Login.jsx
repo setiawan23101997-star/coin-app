@@ -6,7 +6,7 @@ export default function Login({ ctx }) {
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault()
 
     if (!username || !password) {
@@ -18,13 +18,10 @@ export default function Login({ ctx }) {
     setError('')
 
     try {
-      const ok = await ctx.handleLogin(username, password)
+      const ok = ctx.handleLogin(username, password)
       if (!ok) {
-        // ctx.handleLogin already shows a toast; also show inline
         setError('Invalid username or password.')
       }
-      // On success, App re-renders and swaps to the main layout,
-      // so no navigation needed here.
     } catch (err) {
       console.error('Login failed:', err)
       setError(err.message || 'Something went wrong. Please try again.')
@@ -45,10 +42,7 @@ export default function Login({ ctx }) {
         <div className="card border-gold/40 p-6">
           <form onSubmit={handleSubmit} noValidate>
             {error && (
-              <div
-                role="alert"
-                className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm mb-4"
-              >
+              <div role="alert" className="bg-blood/30 border border-blood/60 text-[#e07070] rounded p-3 text-sm mb-4">
                 ❌ {error}
               </div>
             )}
